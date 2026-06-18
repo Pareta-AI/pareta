@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pareta"
+version = "0.1.0"
+description = "Python client for Pareta — deploy open-weights endpoints, run metered inference, and eval models on your own data."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Pareta" }]
+keywords = ["pareta", "llm", "inference", "openai", "evals", "open-weights"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Typing :: Typed",
+]
+# Deliberately tiny: one HTTP client (sync + async) + typing backports.
+dependencies = [
+    "httpx>=0.27",
+    "typing-extensions>=4.10; python_version < '3.12'",
+]
+
+[project.urls]
+Homepage = "https://pareta.ai"
+Documentation = "https://docs.pareta.ai"
+Source = "https://github.com/Pareta-AI/pareta"
+Issues = "https://github.com/Pareta-AI/pareta/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pareta"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
