@@ -1,5 +1,9 @@
 # pareta
 
+[![PyPI](https://img.shields.io/pypi/v/pareta)](https://pypi.org/project/pareta/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pareta)](https://pypi.org/project/pareta/)
+[![License](https://img.shields.io/pypi/l/pareta)](https://github.com/Pareta-AI/pareta/blob/main/LICENSE)
+
 Python client for [Pareta](https://pareta.ai) — deploy open-weights endpoints,
 run metered inference, browse the benchmark catalog, and eval models on your own
 data.
