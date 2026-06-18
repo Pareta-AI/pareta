@@ -1,0 +1,57 @@
+# Publish `pareta` to PyPI on a GitHub Release, via PyPI Trusted Publishing
+# (OIDC — no API tokens). The release-driven trigger means: cut a GitHub
+# Release (e.g. v0.1.0) and this builds the sdist+wheel and publishes them.
+#
+# One-time PyPI setup (https://pypi.org/manage/account/publishing/):
+#   PyPI Project Name : pareta
+#   Owner             : Pareta-AI
+#   Repository name   : pareta
+#   Workflow name     : publish.yml
+#   Environment name  : pypi
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Check metadata
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pareta
+    permissions:
+      id-token: write   # OIDC token for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
