@@ -13,10 +13,20 @@ Evals are metered: the org balance is debited for the compute you ran (open cand
 
 ## Setup
 
+**Python**
+
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()  # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv(); // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 ```
 
 `from_env()` is the path you want; it keeps the key out of your source. See [Authentication](../guide/installation.md) for the constructor form and key formats.
@@ -26,6 +36,8 @@ pa = Pareta.from_env()  # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 A task defines what gets scored and how. Every eval set, run, and result is anchored to one task id. The task also owns the `default_scorer` (the metric your candidates are judged on) and tells you, via `has_blob_input`, whether rows carry documents or images.
 
 If you already know the id, skip ahead. Otherwise, match free text against the catalog:
+
+**Python**
 
 ```python
 match = pa.tasks.match("extract key fields from a contract", top_k=5)
@@ -40,7 +52,27 @@ else:
     raise SystemExit("refine the query")
 ```
 
+**TypeScript**
+
+```typescript
+const match = await pa.tasks.match("extract key fields from a contract", { topK: 5 });
+
+let taskId: string;
+if (match.matched) {
+  taskId = match.chosen!.taskId!; // best candidate
+  console.log(taskId, match.chosen!.confidence); // e.g. "contract-key-fields" "high"
+} else {
+  // nothing landed with confidence; inspect the ranked alternates
+  for (const c of match.candidates) {
+    console.log(c.taskId, c.score?.toFixed(3), c.confidence);
+  }
+  throw new Error("refine the query");
+}
+```
+
 `match.ambiguous` is `True` when the top two scores are close, worth surfacing to a human before committing. Confirm the scorer and input schema before you build a set:
+
+**Python**
 
 ```python
 task = pa.tasks.retrieve(task_id)
@@ -48,11 +80,21 @@ print(task.default_scorer)   # the metric your run will report (e.g. "macro_join
 print(task.has_blob_input)   # True → rows attach PDFs/images (see step 2b)
 ```
 
+**TypeScript**
+
+```typescript
+const task = await pa.tasks.retrieve(taskId);
+console.log(task.defaultScorer); // the metric your run will report (e.g. "macro_joint_f1")
+console.log(task.hasBlobInput);  // true → rows attach PDFs/images (see step 2b)
+```
+
 See [Discover tasks](../guide/discovery.md) for the full matching and catalog walkthrough.
 
 ## 2. Build an eval set from your rows
 
 An eval set is your labeled data, stored server-side and reusable across runs. Each row is a dict whose fields match the task schema. The exact keys are task-specific, but the universal shape is **inputs the model sees** plus a **target** (the gold label the scorer compares against).
+
+**Python**
 
 ```python
 items = [
@@ -74,9 +116,33 @@ print(eval_set.item_count)        # 2
 print(eval_set.scoring_strategy)  # e.g. "extraction"
 ```
 
+**TypeScript**
+
+```typescript
+const items = [
+  {
+    text: "This Agreement is made on 3 March 2026 between Acme Corp and Globex LLC...",
+    target: { effective_date: "2026-03-03", parties: ["Acme Corp", "Globex LLC"] },
+  },
+  {
+    text: "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
+    target: { effective_date: "2026-01-12", parties: ["Initech", "Hooli"] },
+  },
+  // ... more rows. A few dozen labeled rows already give you a usable signal.
+];
+
+const evalSet = await pa.evals.sets.create({ task: taskId, items });
+
+console.log(evalSet.id);              // use this in runs.create({ evalSet: ... })
+console.log(evalSet.itemCount);       // 2
+console.log(evalSet.scoringStrategy); // e.g. "extraction"
+```
+
 `items` must be non-empty (an empty list raises `ValueError` before any request goes out). If you omit `name`, the set is labeled `"sdk eval set (N items)"`.
 
 Reuse a set across many runs, or list and prune as you iterate:
+
+**Python**
 
 ```python
 for s in pa.evals.sets.list():
@@ -85,9 +151,21 @@ for s in pa.evals.sets.list():
 # pa.evals.sets.delete(eval_set.id)   # when you are done with it
 ```
 
+**TypeScript**
+
+```typescript
+for (const s of await pa.evals.sets.list()) {
+  console.log(s.id, s.taskId, s.itemCount, s.name);
+}
+
+// await pa.evals.sets.delete(evalSet.id);   // when you are done with it
+```
+
 ### 2b. Document tasks: attach the file to each row
 
 When `task.has_blob_input` is `True`, the row carries a binary document. Create the set with the row's text/label fields and a placeholder for the blob, then attach the file to that row by index:
+
+**Python**
 
 ```python
 doc_task = "invoice-extraction"   # a has_blob_input task
@@ -106,11 +184,32 @@ pa.evals.sets.upload_document(eval_set.id, "invoices/7781.pdf", idx=0, field_nam
 pa.evals.sets.upload_document(eval_set.id, "invoices/7782.pdf", idx=1, field_name="document")
 ```
 
+**TypeScript**
+
+```typescript
+const docTask = "invoice-extraction"; // a hasBlobInput task
+
+const evalSet = await pa.evals.sets.create({
+  task: docTask,
+  items: [
+    { target: { invoice_number: "INV-7781", total: "1240.00" } },
+    { target: { invoice_number: "INV-7782", total: "98.50" } },
+  ],
+});
+
+// Attach one PDF per row. idx is the 0-based row; fieldName is the blob input
+// field from the task schema. MIME is auto-detected from the filename.
+await pa.evals.sets.uploadDocument(evalSet.id, "invoices/7781.pdf", { idx: 0, fieldName: "document" });
+await pa.evals.sets.uploadDocument(evalSet.id, "invoices/7782.pdf", { idx: 1, fieldName: "document" });
+```
+
 `upload_document` accepts a path (`str`/`Path`), raw `bytes`, or any binary file-like object; anything else raises `TypeError`. Files under 5 MiB upload inline; larger ones go through a signed-URL direct-to-storage flow. Either way the call returns the completion response dict. Pass `mime="application/pdf"` to override detection.
 
 ## 3. Run open candidates against a frontier baseline
 
 This is the core call. You name the open-weights candidates (per-task public aliases) and let `frontier="benchmarked"` pull the vendor baselines that sit on this task's leaderboard. The run scores everything on the same rows with the same scorer, so the numbers are directly comparable.
+
+**Python**
 
 ```python
 run = pa.evals.runs.create(
@@ -121,6 +220,19 @@ run = pa.evals.runs.create(
 )
 
 print(run.status)  # "completed"
+```
+
+**TypeScript**
+
+```typescript
+const run = await pa.evals.runs.create({
+  evalSet: evalSet.id,
+  models: ["contract-kie-1", "contract-kie-2"], // open candidates (aliases)
+  frontier: "benchmarked",                       // vendor baselines on this leaderboard
+  wait: true,                                    // block until the run is terminal
+});
+
+console.log(run.status); // "completed"
 ```
 
 The `models` list is the open candidates you want to rank; it is required. `frontier` controls the baselines:
@@ -140,6 +252,8 @@ GPUs and serving hardware never enter this call. There is no GPU, quantization, 
 
 If you do not need a reusable set, hand the rows straight to the run. Pass `task=` and `items=` instead of `eval_set=`, and the SDK creates the set for you:
 
+**Python**
+
 ```python
 run = pa.evals.runs.create(
     task=task_id,
@@ -150,11 +264,25 @@ run = pa.evals.runs.create(
 )
 ```
 
+**TypeScript**
+
+```typescript
+const run = await pa.evals.runs.create({
+  task: taskId,
+  items,
+  models: ["contract-kie-1", "contract-kie-2"],
+  frontier: "benchmarked",
+  wait: true,
+});
+```
+
 You must pass either `eval_set=<id>` or both `task=` and `items=`; anything else raises `ValueError`.
 
 ### Picking candidates from the leaderboard
 
 If you want the curated pick rather than hand-naming aliases, read the leaderboard and feed its `recommended` id into the run:
+
+**Python**
 
 ```python
 lb = pa.tasks.leaderboard(task_id)
@@ -166,11 +294,29 @@ run = pa.evals.runs.create(eval_set=eval_set.id, models=candidates,
                            frontier="benchmarked", wait=True)
 ```
 
+**TypeScript**
+
+```typescript
+const lb = await pa.tasks.leaderboard(taskId);
+console.log(lb.recommended);   // the deployable alias Pareta curates for this task
+console.log(lb.frontier!.name); // the savings baseline
+
+const candidates = [lb.recommended!, ...lb.models.slice(0, 2).filter((m) => m.kind === "open").map((m) => m.name!)];
+const run = await pa.evals.runs.create({
+  evalSet: evalSet.id,
+  models: candidates,
+  frontier: "benchmarked",
+  wait: true,
+});
+```
+
 To enumerate the frontier roster directly (for example, to build an explicit `frontier=[...]` list), use `pa.evals.frontier_models(task=task_id)`; each entry exposes `.id`, `.vendor`, `.vision`, and `.benchmarked`.
 
 ## 4. Read the ranked results
 
 A terminal run carries one `EvalResult` per model. Sort by `quality_mean` to get the ranking, and read `run.cost` to see what the run cost you:
+
+**Python**
 
 ```python
 ranked = sorted(run.results, key=lambda r: r.quality_mean or 0, reverse=True)
@@ -189,6 +335,26 @@ print(f"\nrun cost: ${run.cost}")          # Decimal dollars, floored to cents
 print(f"raw micro-USD: {run.cost_micro_usd}")
 ```
 
+**TypeScript**
+
+```typescript
+const ranked = [...run.results].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0));
+
+for (const r of ranked) {
+  const costPerItem = (r.meanCostMicroUsd ?? 0) / 1_000_000; // micro-USD → dollars
+  console.log(
+    `${(r.modelId ?? "").padEnd(24)}  ` +
+      `quality=${r.qualityMean!.toFixed(3)}  ` +
+      `[${r.qualityCiLow!.toFixed(3)}, ${r.qualityCiHigh!.toFixed(3)}]  ` +
+      `$${costPerItem.toFixed(6)}/item  ` +
+      `ok=${r.nSucceeded} err=${r.errorCount}`,
+  );
+}
+
+console.log(`\nrun cost: $${run.cost}`);     // dollar string, floored to cents
+console.log(`raw micro-USD: ${run.costMicroUsd}`);
+```
+
 What the fields mean:
 
 - **`quality_mean`**: the model's mean score on the task's scorer, in `[0, 1]`. This is your ranking key.
@@ -205,6 +371,8 @@ What the fields mean:
 
 `wait=True` polls until the run reaches `"completed"` or `"failed"`, then returns. For long sets, tune the cadence and ceiling:
 
+**Python**
+
 ```python
 run = pa.evals.runs.create(
     eval_set=eval_set.id,
@@ -216,7 +384,22 @@ run = pa.evals.runs.create(
 )
 ```
 
+**TypeScript**
+
+```typescript
+const run = await pa.evals.runs.create({
+  evalSet: evalSet.id,
+  models: ["contract-kie-1", "contract-kie-2"],
+  frontier: "benchmarked",
+  wait: true,
+  pollInterval: 5,   // seconds between polls (default 3)
+  timeout: 1800,     // give up after 30 min (default 900); throws ParetaError on timeout
+});
+```
+
 Or fire and poll yourself. `wait=False` returns immediately with a run you can retrieve later:
+
+**Python**
 
 ```python
 run = pa.evals.runs.create(eval_set=eval_set.id,
@@ -231,9 +414,30 @@ if run.is_terminal:
 run = pa.evals.runs.wait(run_id, timeout=1800.0)
 ```
 
+**TypeScript**
+
+```typescript
+let run = await pa.evals.runs.create({
+  evalSet: evalSet.id,
+  models: ["contract-kie-1"],
+  frontier: "benchmarked",
+});
+const runId = run.id!;
+// ... later, from anywhere ...
+run = await pa.evals.runs.retrieve(runId);
+if (run.isTerminal) {
+  console.log(run.status, run.results);
+}
+
+// equivalently, block on an already-started run:
+run = await pa.evals.runs.wait(runId, { timeout: 1800 });
+```
+
 ## Handling an empty balance
 
 Both the open and frontier compute are metered. If the org balance cannot cover the run, `create` raises before any work is billed:
+
+**Python**
 
 ```python
 from pareta import InsufficientCreditsError
@@ -245,9 +449,32 @@ except InsufficientCreditsError:
     print("Out of credit. Top up in the dashboard (billing is browser-only).")
 ```
 
+**TypeScript**
+
+```typescript
+import { InsufficientCreditsError } from "pareta";
+
+try {
+  const run = await pa.evals.runs.create({
+    evalSet: evalSet.id,
+    models: ["contract-kie-1"],
+    frontier: "benchmarked",
+    wait: true,
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Out of credit. Top up in the dashboard (billing is browser-only).");
+  } else {
+    throw e;
+  }
+}
+```
+
 `InsufficientCreditsError` is a subclass of `APIStatusError` (status 402), so you can also catch the broader `ParetaError` if you want one handler for every SDK failure.
 
 ## Full example
+
+**Python**
 
 ```python
 from pareta import Pareta, InsufficientCreditsError
@@ -286,9 +513,56 @@ for r in sorted(run.results, key=lambda r: r.quality_mean or 0, reverse=True):
 print("run cost:", run.cost)  # Decimal dollars, floored to cents
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, InsufficientCreditsError } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+// 1. Pick the task.
+const taskId = "contract-key-fields";
+const task = await pa.tasks.retrieve(taskId);
+console.log("scoring on:", task.defaultScorer);
+
+// 2. Build the eval set from your rows.
+const items = [
+  { text: "This Agreement is made on 3 March 2026 between Acme Corp and Globex LLC...",
+    target: { effective_date: "2026-03-03", parties: ["Acme Corp", "Globex LLC"] } },
+  { text: "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
+    target: { effective_date: "2026-01-12", parties: ["Initech", "Hooli"] } },
+];
+const evalSet = await pa.evals.sets.create({ task: taskId, items, name: "contract fields v1" });
+
+// 3. Run open candidates against the benchmarked frontier baselines.
+let run;
+try {
+  run = await pa.evals.runs.create({
+    evalSet: evalSet.id,
+    models: ["contract-kie-1", "contract-kie-2"],
+    frontier: "benchmarked",
+    wait: true,
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    throw new Error("Out of credit. Top up in the dashboard.");
+  }
+  throw e;
+}
+
+// 4. Read the ranked results.
+for (const r of [...run.results].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))) {
+  console.log(`${(r.modelId ?? "").padEnd(24)} ${r.qualityMean!.toFixed(3)}  $${((r.meanCostMicroUsd ?? 0) / 1e6).toFixed(6)}/item`);
+}
+
+console.log("run cost:", run.cost); // dollar string, floored to cents
+```
+
 ## Async
 
 Every call here has an `async` twin on `AsyncPareta`. The signatures match; the methods are coroutines (`wait` included).
+
+**Python**
 
 ```python
 import asyncio
@@ -308,6 +582,30 @@ async def main():
         print("run cost:", run.cost)
 
 asyncio.run(main())
+```
+
+**TypeScript**
+
+In TypeScript there is no separate `AsyncPareta` — the one `Pareta` client is already
+async. Every I/O method returns a `Promise`, so you just `await` it; there is no sync/async
+split to mirror and no context manager to close.
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+const evalSet = await pa.evals.sets.create({ task: "contract-key-fields", items });
+const run = await pa.evals.runs.create({
+  evalSet: evalSet.id,
+  models: ["contract-kie-1", "contract-kie-2"],
+  frontier: "benchmarked",
+  wait: true,
+});
+for (const r of run.results) {
+  console.log(r.modelId, r.qualityMean);
+}
+console.log("run cost:", run.cost);
 ```
 
 ## Next steps

@@ -14,6 +14,8 @@ non-streaming call.
 
 ## Quickstart
 
+**Python**
+
 ```python
 from pareta import Pareta
 
@@ -32,6 +34,28 @@ for chunk in stream:
 print()
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv(); // reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
+
+const stream = pa.chat.completions.create({
+  model: "ep_contract_kie", // an endpoint id from endpoints.deploy(...)
+  messages: [{ role: "user", content: "Write a haiku about throughput." }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  const delta = chunk.choices[0].delta.content;
+  if (delta) {
+    process.stdout.write(delta);
+  }
+}
+console.log();
+```
+
 `stream=True` changes the return type: instead of a single `ChatCompletion`,
 `create(...)` returns an `Iterator[ChatCompletionChunk]`. Nothing is sent until
 you start iterating, and the connection stays open for the life of the loop.
@@ -41,12 +65,24 @@ you start iterating, and the connection stays open for the life of the loop.
 A streaming chunk has the same schema as a `ChatCompletion`, but each choice
 carries a `delta` (the incremental token) instead of a full `message`:
 
+**Python**
+
 ```python
 chunk.choices[0].delta.content   # str | None — the new text in this chunk
 chunk.choices[0].delta.role      # str | None — usually only set on the first chunk
 chunk.choices[0].finish_reason   # str | None — "stop" / "length" on the last chunk
 chunk.id                         # str | None
 chunk.model                      # str | None
+```
+
+**TypeScript**
+
+```typescript
+chunk.choices[0].delta.content   // string | null — the new text in this chunk
+chunk.choices[0].delta.role      // string | null — usually only set on the first chunk
+chunk.choices[0].finishReason    // string | null — "stop" / "length" on the last chunk
+chunk.id                         // string | null
+chunk.model                      // string | null
 ```
 
 `delta.content` is `None` on chunks that carry no text (for example the opening
@@ -61,6 +97,8 @@ response object keeps it: `chunk.to_dict()` returns the untouched payload.
 ## Accumulating the full text
 
 Collect the deltas into a buffer to reconstruct the complete message:
+
+**Python**
 
 ```python
 from pareta import Pareta
@@ -92,6 +130,41 @@ print(full_text)
 print("finish_reason:", finish_reason)  # e.g. "stop" or "length"
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+const chunks = pa.chat.completions.create({
+  model: "ep_contract_kie",
+  messages: [
+    { role: "system", content: "You are concise." },
+    { role: "user", content: "Summarize what an invoice number is." },
+  ],
+  stream: true,
+  temperature: 0.2, // extra OpenAI params pass straight through
+  max_tokens: 256,
+});
+
+const parts: string[] = [];
+let finishReason: string | null = null;
+for await (const chunk of chunks) {
+  const choice = chunk.choices[0];
+  if (choice.delta.content) {
+    parts.push(choice.delta.content);
+  }
+  if (choice.finishReason) {
+    finishReason = choice.finishReason;
+  }
+}
+
+const fullText = parts.join("");
+console.log(fullText);
+console.log("finishReason:", finishReason); // e.g. "stop" or "length"
+```
+
 A `finish_reason` of `"length"` means the model hit `max_tokens` before it was
 done; raise `max_tokens` if you need the full answer.
 
@@ -107,6 +180,8 @@ in the request body: `temperature`, `max_tokens`, `top_p`, `stop`,
 and tensor-parallelism are resolved by Pareta when you deploy the endpoint, so
 the only model selector here is the endpoint id you pass to `model`.
 
+**Python**
+
 ```python
 stream = pa.chat.completions.create(
     model="ep_contract_kie",
@@ -117,10 +192,24 @@ stream = pa.chat.completions.create(
 )
 ```
 
+**TypeScript**
+
+```typescript
+const stream = pa.chat.completions.create({
+  model: "ep_contract_kie",
+  messages: [{ role: "user", content: "List three GPU-free wins." }],
+  stream: true,
+  top_p: 0.9,
+  stop: ["\n\n"],
+});
+```
+
 ## Async streaming
 
 `AsyncPareta` mirrors the sync client. `create(...)` is a coroutine, so
 `await` it once to get the async iterator, then drive it with `async for`:
+
+**Python**
 
 ```python
 import asyncio
@@ -144,6 +233,31 @@ async def main():
 asyncio.run(main())
 ```
 
+**TypeScript**
+
+```typescript
+// There is no AsyncPareta in TypeScript: the single `Pareta` client is already
+// async. `create({ stream: true })` returns an AsyncIterable<ChatCompletionChunk>
+// directly — drive it with `for await`, no separate await for the stream handle.
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+const stream = pa.chat.completions.create({
+  model: "ep_contract_kie",
+  messages: [{ role: "user", content: "Stream me a limerick." }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  const delta = chunk.choices[0].delta.content;
+  if (delta) {
+    process.stdout.write(delta);
+  }
+}
+console.log();
+```
+
 The `async with` block calls `aclose()` for you when the block exits, releasing
 the HTTP client. The chunk shape is identical to the sync path:
 `chunk.choices[0].delta.content` is the incremental text.
@@ -154,6 +268,8 @@ Streamed inference debits your org balance on success, the same as a
 non-streaming completion. Top-ups are browser-only; the SDK does not expose
 balance or payment methods. If the balance is empty, the call raises
 `InsufficientCreditsError` (HTTP 402) before any tokens flow:
+
+**Python**
 
 ```python
 from pareta import Pareta
@@ -176,6 +292,37 @@ except InsufficientCreditsError:
     print("Out of credit — top up in the dashboard.")
 except EndpointNotReadyError:
     print("Endpoint is cold or stopped — start it and retry.")
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta, InsufficientCreditsError, EndpointNotReadyError } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+try {
+  const stream = pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "Hello" }],
+    stream: true,
+  });
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0].delta.content;
+    if (delta) {
+      process.stdout.write(delta);
+    }
+  }
+  console.log();
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Out of credit — top up in the dashboard.");
+  } else if (e instanceof EndpointNotReadyError) {
+    console.log("Endpoint is cold or stopped — start it and retry.");
+  } else {
+    throw e;
+  }
+}
 ```
 
 A few things to know about how the stream behaves under failure:

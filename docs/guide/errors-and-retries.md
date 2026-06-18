@@ -9,6 +9,8 @@ the timeout and retry budget.
 
 Import the exceptions straight from the package:
 
+**Python**
+
 ```python
 from pareta import (
     Pareta,
@@ -25,6 +27,26 @@ from pareta import (
     RateLimitError,             # 429
     EndpointNotReadyError,      # 503 — endpoint stopped/cold/provider down
 )
+```
+
+**TypeScript**
+
+```typescript
+import {
+  Pareta,
+  ParetaError,                // base class for everything below
+  APIConnectionError,         // never reached the server (DNS/TCP/TLS)
+  APITimeoutError,            // subclass of APIConnectionError
+  APIStatusError,             // any non-2xx from the server
+  BadRequestError,            // 400, 422
+  AuthenticationError,        // 401
+  PermissionDeniedError,      // 403
+  InsufficientCreditsError,   // 402 — org out of balance
+  NotFoundError,              // 404
+  ConflictError,              // 409
+  RateLimitError,             // 429
+  EndpointNotReadyError,      // 503 — endpoint stopped/cold/provider down
+} from "pareta";
 ```
 
 ## The hierarchy
@@ -72,6 +94,8 @@ Every `APIStatusError` carries the fields you need to log and debug. `request_id
 comes from the `x-request-id` response header and is the fastest thing to quote
 in a support thread.
 
+**Python**
+
 ```python
 from pareta import Pareta, APIStatusError
 
@@ -83,6 +107,24 @@ with Pareta.from_env() as pa:
         print(e.detail)        # server's `detail` string (or raw body)
         print(e.request_id)    # "req_…" — quote this in bug reports
         print(e.response)      # the underlying httpx.Response, for advanced use
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta, APIStatusError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  await pa.endpoints.retrieve("ep_does_not_exist");
+} catch (e) {
+  if (e instanceof APIStatusError) {
+    console.log(e.status);     // 404
+    console.log(e.detail);     // server's `detail` string (or raw body)
+    console.log(e.requestId);  // "req_…" — quote this in bug reports
+    console.log(e.response);   // the underlying fetch Response, for advanced use
+  }
+}
 ```
 
 `str(e)` is the server's `detail` message when present, otherwise `HTTP <code>`.
@@ -101,6 +143,8 @@ runs. When the balance can't cover the call, you get a 402. Top-up is
 browser-only — the SDK exposes no balance or payment surface — so the right move
 is to surface a clear message pointing at the dashboard.
 
+**Python**
+
 ```python
 from pareta import Pareta, InsufficientCreditsError
 
@@ -114,9 +158,30 @@ with Pareta.from_env() as pa:
         raise SystemExit("Org balance is empty. Top up at https://pareta.ai dashboard.")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, InsufficientCreditsError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  const resp = await pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "Extract the parties." }],
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    throw new Error("Org balance is empty. Top up at https://pareta.ai dashboard.");
+  }
+  throw e;
+}
+```
+
 ### `NotFoundError` (404) — wrong id
 
 A stale or mistyped endpoint id, eval set id, run id, or task id.
+
+**Python**
 
 ```python
 from pareta import Pareta, NotFoundError
@@ -128,6 +193,24 @@ with Pareta.from_env() as pa:
         ep = pa.endpoints.deploy(task="contract-key-fields", wait=True)  # redeploy
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, NotFoundError } from "pareta";
+
+const pa = Pareta.fromEnv();
+let ep;
+try {
+  ep = await pa.endpoints.retrieve("ep_maybe_deleted");
+} catch (e) {
+  if (e instanceof NotFoundError) {
+    ep = await pa.endpoints.deploy({ task: "contract-key-fields", wait: true });  // redeploy
+  } else {
+    throw e;
+  }
+}
+```
+
 ### `EndpointNotReadyError` (503) — endpoint not serving
 
 The endpoint exists but isn't serving yet: it's stopped, cold-starting, or the
@@ -135,6 +218,8 @@ provider is briefly unavailable. The SDK already retries 503 a couple of times
 (see [Automatic retries](#automatic-retries)); if it still surfaces, start the
 endpoint and retry your call. Remember that hardware is fully managed —
 [`start()`](deploying-endpoints.md) takes no GPU knob, just the endpoint id.
+
+**Python**
 
 ```python
 from pareta import Pareta, EndpointNotReadyError
@@ -150,10 +235,33 @@ with Pareta.from_env() as pa:
         ep = pa.endpoints.retrieve("ep_contract_kie")  # poll until ep.is_live, then retry
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, EndpointNotReadyError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  const resp = await pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "ping" }],
+  });
+} catch (e) {
+  if (e instanceof EndpointNotReadyError) {
+    await pa.endpoints.start("ep_contract_kie");           // warm it back up
+    const ep = await pa.endpoints.retrieve("ep_contract_kie");  // poll until ep.isLive, then retry
+  } else {
+    throw e;
+  }
+}
+```
+
 ### `RateLimitError` (429) — slow down
 
 Already retried automatically, honoring the server's `Retry-After`. You only see
 it after the retry budget is exhausted. Back off and try again later.
+
+**Python**
 
 ```python
 from pareta import Pareta, RateLimitError
@@ -168,11 +276,33 @@ with Pareta.from_env() as pa:
         print(f"Still rate limited after retries (request {e.request_id}); back off.")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, RateLimitError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  await pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "hi" }],
+  });
+} catch (e) {
+  if (e instanceof RateLimitError) {
+    console.log(`Still rate limited after retries (request ${e.requestId}); back off.`);
+  } else {
+    throw e;
+  }
+}
+```
+
 ### `AuthenticationError` (401) vs missing key
 
 A 401 means the key reached the server and was rejected (wrong or revoked). That
 is distinct from constructing a client with *no* key at all, which fails fast
 client-side with a plain `ParetaError` before any request goes out:
+
+**Python**
 
 ```python
 import pareta
@@ -181,6 +311,20 @@ try:
     pa = pareta.Pareta(api_key="")   # or PARETA_API_KEY unset with from_env()
 except pareta.ParetaError as e:
     print(e)  # "missing API key. Pass api_key=… or set PARETA_API_KEY …"
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta, ParetaError } from "pareta";
+
+try {
+  const pa = new Pareta({ apiKey: "" });   // or PARETA_API_KEY unset with Pareta.fromEnv()
+} catch (e) {
+  if (e instanceof ParetaError) {
+    console.log(e.message);  // "missing API key. Pass apiKey: … or use Pareta.fromEnv() …"
+  }
+}
 ```
 
 ## Pre-flight `ValueError` / `TypeError`
@@ -224,6 +368,8 @@ errors on the very first attempt are surfaced as `APIConnectionError` /
 
 Tune the budget per client. Set `max_retries=0` to disable retries entirely:
 
+**Python**
+
 ```python
 from pareta import Pareta
 
@@ -234,6 +380,18 @@ pa = Pareta.from_env(max_retries=5)
 strict = Pareta.from_env(max_retries=0)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+// More aggressive: up to 6 attempts on transient failures.
+const pa = Pareta.fromEnv({ maxRetries: 5 });
+
+// No retries — fail fast and handle it yourself.
+const strict = Pareta.fromEnv({ maxRetries: 0 });
+```
+
 ### Streaming and retries
 
 Retries apply only to the initial handshake (connect and status line). Once SSE
@@ -242,6 +400,8 @@ bytes are flowing — token chunks from a streamed
 streamed [deploy](deploying-endpoints.md) — a mid-stream drop raises immediately, because
 the stream cannot be safely resumed. Catch it and restart the request from the
 top if you need to.
+
+**Python**
 
 ```python
 from pareta import Pareta, APIConnectionError
@@ -260,12 +420,39 @@ with Pareta.from_env() as pa:
         print("\n[stream dropped — re-issue the request to retry]")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, APIConnectionError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  const stream = pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "Summarize the contract." }],
+    stream: true,
+  });
+  for await (const chunk of stream) {
+    const piece = chunk.choices[0].delta.content;
+    if (piece) process.stdout.write(piece);
+  }
+} catch (e) {
+  if (e instanceof APIConnectionError) {
+    console.log("\n[stream dropped — re-issue the request to retry]");
+  } else {
+    throw e;
+  }
+}
+```
+
 ## Timeouts
 
 The default per-request timeout is `httpx.Timeout(60.0, connect=10.0)`: 60s
 overall, 10s to establish the connection. A request that exceeds it raises
 `APITimeoutError` (a subclass of `APIConnectionError`) after the retry budget is
 spent. Override it with any `httpx.Timeout` (or a bare float):
+
+**Python**
 
 ```python
 import httpx
@@ -285,6 +472,29 @@ with pa:
         print("Request timed out; consider streaming or a larger timeout.")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, APITimeoutError } from "pareta";
+
+// 120s overall (one budget — there's no separate connect timeout in TS).
+const pa = Pareta.fromEnv({ timeout: 120_000 });
+
+try {
+  await pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "Write a long summary." }],
+    max_tokens: 4096,
+  });
+} catch (e) {
+  if (e instanceof APITimeoutError) {
+    console.log("Request timed out; consider streaming or a larger timeout.");
+  } else {
+    throw e;
+  }
+}
+```
+
 ### Eval-run wait timeout
 
 [`evals.runs.create(wait=True)`](evaluation.md) and `evals.runs.wait()` are
@@ -293,6 +503,8 @@ the *whole poll loop* (default 900s), not a single HTTP request. If the run
 hasn't reached a terminal status (`completed` or `failed`) by the deadline, the
 poll helper raises a plain `ParetaError` — the run keeps going server-side, so
 you can re-`retrieve()` it later by id.
+
+**Python**
 
 ```python
 from pareta import Pareta, ParetaError
@@ -313,6 +525,32 @@ with Pareta.from_env() as pa:
         print(e)  # "eval run … did not finish within 600s" — poll later with runs.retrieve(id)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, ParetaError } from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  const run = await pa.evals.runs.create({
+    task: "contract-key-fields",
+    items: [{ input: "...", expected: "..." }],
+    models: ["contract-1", "contract-2"],
+    frontier: "benchmarked",
+    wait: true,
+    timeout: 600,        // give up waiting after 10 minutes
+    pollInterval: 5,
+  });
+  console.log(run.status, run.cost);   // e.g. "completed" "0.42"
+} catch (e) {
+  if (e instanceof ParetaError) {
+    console.log(e.message);  // "eval run … did not finish within 600s" — poll later with runs.retrieve(id)
+  } else {
+    throw e;
+  }
+}
+```
+
 Note that a run finishing with `status == "failed"` is *not* an exception — it's
 a terminal state you read off the returned `EvalRun` (`run.is_terminal` is True,
 `run.error_detail` carries the message). Only the wait *timeout* raises.
@@ -322,6 +560,8 @@ a terminal state you read off the returned `EvalRun` (`run.is_terminal` is True,
 `AsyncPareta` raises the exact same exception classes; wrap `await` calls in the
 same `try`/`except`. Retries, backoff, and timeouts behave identically — backoff
 just uses `asyncio.sleep` under the hood.
+
+**Python**
 
 ```python
 import asyncio
@@ -343,10 +583,42 @@ async def main():
 asyncio.run(main())
 ```
 
+**TypeScript**
+
+```typescript
+// There is no AsyncPareta in TypeScript — the single `Pareta` client is already
+// async: every I/O method returns a Promise, so you just `await` it. The same
+// exception classes, retries, backoff, and timeouts apply unchanged.
+import { Pareta, InsufficientCreditsError, EndpointNotReadyError } from "pareta";
+
+async function main() {
+  const pa = Pareta.fromEnv();
+  try {
+    const resp = await pa.chat.completions.create({
+      model: "ep_contract_kie",
+      messages: [{ role: "user", content: "Extract the parties." }],
+    });
+    console.log(resp.choices[0].message.content);
+  } catch (e) {
+    if (e instanceof InsufficientCreditsError) {
+      console.log("Top up your org balance in the dashboard.");
+    } else if (e instanceof EndpointNotReadyError) {
+      await pa.endpoints.start("ep_contract_kie");
+    } else {
+      throw e;
+    }
+  }
+}
+
+main();
+```
+
 ## A layered handler
 
 A practical pattern: catch the few cases you can act on, then fall back to the
 base class so nothing escapes unhandled.
+
+**Python**
 
 ```python
 from pareta import (
@@ -375,6 +647,42 @@ with Pareta.from_env() as pa:
         print("Timed out — raise the timeout or stream the response.")
     except ParetaError as e:
         print(f"Unexpected SDK error: {e}")  # request_id is on APIStatusError subclasses
+```
+
+**TypeScript**
+
+```typescript
+import {
+  Pareta,
+  InsufficientCreditsError,
+  EndpointNotReadyError,
+  RateLimitError,
+  APITimeoutError,
+  ParetaError,
+} from "pareta";
+
+const pa = Pareta.fromEnv();
+try {
+  const resp = await pa.chat.completions.create({
+    model: "ep_contract_kie",
+    messages: [{ role: "user", content: "Extract the parties." }],
+  });
+  console.log(resp.choices[0].message.content);
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Out of balance — top up in the dashboard.");
+  } else if (e instanceof EndpointNotReadyError) {
+    await pa.endpoints.start("ep_contract_kie");  // warm it, then retry
+  } else if (e instanceof RateLimitError) {
+    console.log("Rate limited after retries — back off and try again.");
+  } else if (e instanceof APITimeoutError) {
+    console.log("Timed out — raise the timeout or stream the response.");
+  } else if (e instanceof ParetaError) {
+    console.log(`Unexpected SDK error: ${e.message}`);  // requestId is on APIStatusError subclasses
+  } else {
+    throw e;
+  }
+}
 ```
 
 ## See also

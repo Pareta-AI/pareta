@@ -31,6 +31,8 @@ This is the whole loop: name a task, let Pareta pick the recommended model,
 deploy it, and send a request. The `wait=True` flag blocks through the deploy
 SSE stream and hands you back a live `Endpoint`.
 
+**Python**
+
 ```python
 from pareta import Pareta
 
@@ -52,6 +54,31 @@ resp = pa.chat.completions.create(
 )
 print(resp.choices[0].message.content)
 print("tokens:", resp.usage.total_tokens)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();                              // reads PARETA_API_KEY
+
+const task = "contract-key-fields";                       // a subtask id from the catalog
+
+// Inspect the model deploy({ model: "recommended" }) will pick (a per-task alias).
+console.log("recommended:", await pa.tasks.recommended(task)); // e.g. "qwen-vl-2"
+
+// Deploy it. No GPU, quantization, or parallelism knob — Pareta resolves all of it.
+const ep = await pa.endpoints.deploy({ task, model: "recommended", wait: true });
+console.log("live endpoint:", ep.id, ep.status);          // e.g. "ep_a1b2c3" "live"
+
+// Run OpenAI-compatible inference against the endpoint id.
+const resp = await pa.chat.completions.create({
+  model: ep.id,                                           // the endpoint id, not the alias
+  messages: [{ role: "user", content: "Say hello in one short sentence." }],
+});
+console.log(resp.choices[0].message.content);
+console.log("tokens:", resp.usage.totalTokens);
 ```
 
 Output:
@@ -84,6 +111,8 @@ Pass `stream=True` to get an iterator of `ChatCompletionChunk`. The incremental
 text lives on `chunk.choices[0].delta.content` (it can be `None` on the first
 and last chunks, so guard it).
 
+**Python**
+
 ```python
 for chunk in pa.chat.completions.create(
     model=ep.id,
@@ -94,6 +123,19 @@ for chunk in pa.chat.completions.create(
 print()
 ```
 
+**TypeScript**
+
+```typescript
+for await (const chunk of pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "Write a haiku about invoices." }],
+  stream: true,
+})) {
+  process.stdout.write(chunk.choices[0].delta.content || "");
+}
+console.log();
+```
+
 Extra OpenAI parameters (`temperature`, `max_tokens`, `top_p`, and so on) pass
 straight through as keyword arguments.
 
@@ -101,6 +143,8 @@ straight through as keyword arguments.
 
 Every successful completion debits your org's balance. If the balance is empty,
 the call raises `InsufficientCreditsError` (HTTP 402). Top-up is browser-only.
+
+**Python**
 
 ```python
 from pareta import InsufficientCreditsError
@@ -113,6 +157,25 @@ except InsufficientCreditsError:
     print("Out of credit — top up in the dashboard.")
 ```
 
+**TypeScript**
+
+```typescript
+import { InsufficientCreditsError } from "pareta";
+
+try {
+  const resp = await pa.chat.completions.create({
+    model: ep.id,
+    messages: [{ role: "user", content: "ping" }],
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Out of credit — top up in the dashboard.");
+  } else {
+    throw e;
+  }
+}
+```
+
 Evaluation runs are metered the same way (open plus frontier compute). An
 `EvalRun` reports its billed total on `run.cost`, a `Decimal` in dollars floored
 to whole cents (so a sub-cent run reads `Decimal("0.00")`); the raw value is on
@@ -123,10 +186,22 @@ to whole cents (so a sub-cent run reads `Decimal("0.00")`); the raw value is on
 Stop the endpoint when you are done so it stops accruing cost, and close the
 client (or use it as a context manager).
 
+**Python**
+
 ```python
 pa.endpoints.stop(ep.id)        # later: pa.endpoints.start(ep.id) / pa.endpoints.delete(ep.id)
 pa.close()
 ```
+
+**TypeScript**
+
+```typescript
+await pa.endpoints.stop(ep.id); // later: pa.endpoints.start(ep.id) / pa.endpoints.delete(ep.id)
+// No close() in TS: the client owns no connection (it uses the native fetch),
+// so there is nothing to release and no context-manager form to wrap it in.
+```
+
+**Python**
 
 ```python
 # Context-manager form closes the HTTP client for you.
@@ -136,20 +211,43 @@ with Pareta.from_env() as pa:
     ])
 ```
 
+**TypeScript**
+
+```typescript
+// No context manager in TS — just construct and use it; nothing to close.
+const pa = Pareta.fromEnv();
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "hi" }],
+});
+```
+
 ## List what you can call
 
 `models.list()` returns the OpenAI-compatible subset: deployed endpoints with a
 live URL. Each `id` is usable directly in `chat.completions.create(model=...)`.
+
+**Python**
 
 ```python
 for m in pa.models.list():
     print(m.id, m.owned_by)
 ```
 
+**TypeScript**
+
+```typescript
+for (const m of await pa.models.list()) {
+  console.log(m.id, m.ownedBy);
+}
+```
+
 ## Async
 
 `AsyncPareta` mirrors the sync client; resource methods are `async def` and
 streams are async iterators.
+
+**Python**
 
 ```python
 import asyncio
@@ -169,6 +267,28 @@ async def main():
 asyncio.run(main())
 ```
 
+**TypeScript**
+
+```typescript
+// There is no AsyncPareta in TypeScript — the single `Pareta` client is already
+// async. Every I/O method returns a Promise (await it), and streams are async
+// iterables (`for await`). `tasks.recommended()` / `tasks.leaderboard()` are
+// present here too (no sync-only carve-out).
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const ep = await pa.endpoints.deploy({
+  task: "contract-key-fields",
+  model: "recommended",
+  wait: true,
+});
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "Say hello." }],
+});
+console.log(resp.choices[0].message.content);
+```
+
 One async difference to note: `tasks.recommended()` and `tasks.leaderboard()`
 are sync-only for now.
 
@@ -176,6 +296,8 @@ are sync-only for now.
 
 You do not need this SDK just to call a deployed endpoint. Point the `openai`
 client at your `base_url` plus your `pareta_sk_` key:
+
+**Python**
 
 ```python
 from openai import OpenAI
@@ -185,6 +307,18 @@ resp = client.chat.completions.create(
     model="ep_a1b2c3",
     messages=[{"role": "user", "content": "hi"}],
 )
+```
+
+**TypeScript**
+
+```typescript
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: "pareta_sk_...", baseURL: "https://api.pareta.ai/v1" });
+const resp = await client.chat.completions.create({
+  model: "ep_a1b2c3",
+  messages: [{ role: "user", content: "hi" }],
+});
 ```
 
 This SDK's unique value is the control plane: deploy, operate, and eval models

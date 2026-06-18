@@ -7,6 +7,15 @@ into one self-contained file an agent can ingest in a single read. Both are
 GENERATED from sdk/docs/*.md (the single source of truth) — never hand-edited —
 and a CI drift guard (--check) fails if they're stale.
 
+The generator is language-aware. Pareta ships one SDK per language (Python
+today, TypeScript next), but they SHARE one set of docs: each page carries
+stacked ```python / ```typescript code blocks (Path A in SDK_TS_PLAN.md — no
+MDX <Tabs>, so the markdown stays renderer-agnostic and feeds llms.txt
+verbatim). So there is ONE flat SECTIONS list and ONE set of URLs covering
+every SDK; only the language-specific INTRO text is parametrized, via LANGUAGES.
+Any new TS-specific page slots into guide/examples/reference and is added to
+SECTIONS like any other. All SDKs share BASE_URL = https://docs.pareta.ai.
+
     python sdk/scripts/build_llms.py            # regenerate
     python sdk/scripts/build_llms.py --check    # exit 1 if they'd change
 
@@ -17,22 +26,47 @@ from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parents[1] / "docs"
 BASE_URL = "https://docs.pareta.ai"
 
+
+@dataclass(frozen=True)
+class Language:
+    """One SDK's install/import one-liner — the only language-specific text.
+
+    The docs themselves are shared (stacked code blocks per page), so a language
+    is just how you install it and the symbol you import. Add an entry here and
+    its blurb appears in both files automatically.
+    """
+
+    name: str
+    install: str
+    import_hint: str
+
+
+LANGUAGES: list[Language] = [
+    Language("Python", "pip install pareta", "from pareta import Pareta"),
+    Language("TypeScript/JavaScript", "npm install pareta",
+             'import { Pareta } from "pareta"'),
+]
+
+# General, language-neutral product summary (the blockquote at the top of both
+# files). Anything language-specific lives in LANGUAGES, surfaced by _sdk_blurb.
 INTRO = (
-    "Pareta is a marketplace + control plane for open-weights models. The "
-    "`pareta` Python SDK lets you deploy task-specific open-weights endpoints "
-    "(Pareta picks the GPU), run metered OpenAI-compatible inference, browse a "
-    "per-task benchmark catalog, and evaluate models on your own data — then "
-    "deploy the winner. Install with `pip install pareta`; authenticate with a "
-    "`pareta_sk_` key from the dashboard or `PARETA_API_KEY`."
+    "Pareta is a marketplace + control plane for open-weights models. Its SDKs "
+    "let you deploy task-specific open-weights endpoints (Pareta picks the GPU), "
+    "run metered OpenAI-compatible inference, browse a per-task benchmark "
+    "catalog, and evaluate models on your own data — then deploy the winner. "
+    "Authenticate with a `pareta_sk_` key from the dashboard or the "
+    "`PARETA_API_KEY` environment variable."
 )
 
-# Canonical reading order (mirrors the section index pages). README index files
-# are intentionally excluded — llms.txt links content pages directly.
+# Canonical reading order (mirrors the section index pages). One flat list — each
+# page covers every SDK via stacked code blocks. README index files are
+# intentionally excluded — llms.txt links content pages directly.
 SECTIONS: list[tuple[str, str, list[str]]] = [
     ("Guide", "guide", [
         "installation", "quickstart", "core-concepts", "inference",
@@ -49,6 +83,18 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
         "exceptions", "types", "http-api",
     ]),
 ]
+
+
+def _sdk_blurb() -> str:
+    """One line naming every SDK and how to install/import it — from LANGUAGES."""
+    sdks = "; ".join(
+        f"{lang.name} (`{lang.install}`, `{lang.import_hint}`)"
+        for lang in LANGUAGES
+    )
+    return (
+        "Pareta ships one SDK per language, all sharing these docs and the same "
+        f"`/v1` HTTP API: {sdks}."
+    )
 
 
 def _title(md: str, fallback: str) -> str:
@@ -93,13 +139,16 @@ def _read(section: str, stem: str) -> str | None:
 
 
 def build() -> tuple[str, str]:
-    index_lines = [f"# Pareta\n", f"> {INTRO}\n"]
+    blurb = _sdk_blurb()
+    index_lines = [f"# Pareta\n", f"> {INTRO}\n", f"{blurb}\n"]
     full_lines = [
-        "# Pareta SDK — full documentation\n",
+        "# Pareta SDKs — full documentation\n",
         f"> {INTRO}\n",
+        f"{blurb}\n",
         "This file concatenates the entire Pareta SDK documentation (guide + "
-        "examples + reference) for single-read agent consumption. Source: "
-        "sdk/docs/ in the repo; browsable at https://docs.pareta.ai.\n",
+        "examples + reference, every language) for single-read agent "
+        "consumption. Source: sdk/docs/ in the repo; browsable at "
+        "https://docs.pareta.ai.\n",
     ]
     missing: list[str] = []
     for label, section, stems in SECTIONS:
@@ -118,7 +167,7 @@ def build() -> tuple[str, str]:
     index_lines.append("\n## Optional\n")
     index_lines.append(
         f"- [OpenAPI spec]({BASE_URL}/openapi.json): machine-readable contract "
-        "for the underlying /v1 HTTP API the SDK wraps.")
+        "for the underlying /v1 HTTP API the SDKs wrap.")
     index_lines.append(
         f"- [llms-full.txt]({BASE_URL}/llms-full.txt): the entire docs in one file.")
 

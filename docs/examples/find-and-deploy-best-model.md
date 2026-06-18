@@ -34,10 +34,20 @@ A few platform truths that shape the code below:
 
 ## Setup
 
+**Python**
+
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 ```
 
 `from_env()` is the preferred constructor. To pass the key explicitly:
@@ -47,6 +57,8 @@ pa = Pareta.from_env()   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 `match` takes free text and returns a ranked `TaskMatch`. Use `.matched` to gate
 on a confident hit and `.chosen` for the best candidate.
+
+**Python**
 
 ```python
 m = pa.tasks.match("extract the key fields from a contract", top_k=5)
@@ -61,6 +73,26 @@ task_id = m.chosen.task_id
 print(f"matched {task_id}  (score={m.chosen.score:.2f}, via {m.matcher})")
 if m.ambiguous:
     print("Heads up: the top two candidates scored close together.")
+```
+
+**TypeScript**
+
+```typescript
+const m = await pa.tasks.match("extract the key fields from a contract", { topK: 5 });
+
+if (!m.matched) {
+  // No confident hit. Inspect the alternates and pick one, or rephrase.
+  for (const c of m.candidates) {
+    console.log(`${c.taskId}  score=${c.score?.toFixed(2)}  (${c.confidence})`);
+  }
+  throw new Error("No confident task match. Pick a candidate above.");
+}
+
+const taskId = m.chosen.taskId;
+console.log(`matched ${taskId}  (score=${m.chosen.score?.toFixed(2)}, via ${m.matcher})`);
+if (m.ambiguous) {
+  console.log("Heads up: the top two candidates scored close together.");
+}
 ```
 
 `TaskMatch` fields: `.query`, `.matched` (bool), `.chosen`
@@ -80,6 +112,8 @@ The leaderboard ranks models for a task by quality and cost, names the
 `recommended` deployable pick, and includes a `frontier` baseline so you know what
 you are saving against.
 
+**Python**
+
 ```python
 lb = pa.tasks.leaderboard(task_id)
 
@@ -95,6 +129,25 @@ if lb.frontier:
     print(f"\nfrontier baseline: {f.name}  q={f.quality:.3f}")
 ```
 
+**TypeScript**
+
+```typescript
+const lb = await pa.tasks.leaderboard(taskId);
+
+console.log(`recommended: ${lb.recommended}`);
+console.log(`ranked by ${lb.metric}, cost per ${lb.costUnit}\n`);
+
+for (const e of lb.models) {
+  const costUsd = (e.costPerRequestMicroUsd ?? 0) / 1_000_000;
+  console.log(`${e.name} ${e.kind} q=${e.quality?.toFixed(3)}  $${costUsd.toFixed(6)}/req  ${e.contextK}k ctx`);
+}
+
+if (lb.frontier) {
+  const f = lb.frontier;
+  console.log(`\nfrontier baseline: ${f.name}  q=${f.quality?.toFixed(3)}`);
+}
+```
+
 `Leaderboard` fields: `.task_id`, `.metric`, `.cost_unit`, `.recommended`
 (deployable model alias, or `None`), `.models` (ranked `LeaderboardEntry` list),
 and `.frontier` (a single baseline entry, or `None`). Each `LeaderboardEntry` has
@@ -108,8 +161,16 @@ cents would erase the open-vs-frontier gap that makes the comparison worth doing
 
 Want just the deployable pick without the full board:
 
+**Python**
+
 ```python
 pick = pa.tasks.recommended(task_id)   # -> str | None, the recommended alias
+```
+
+**TypeScript**
+
+```typescript
+const pick = await pa.tasks.recommended(taskId);   // -> string | null, the recommended alias
 ```
 
 This is exactly what `endpoints.deploy(model="recommended")` resolves to under the
@@ -123,6 +184,8 @@ catalog's contracts. Run a real eval on *your* rows before you deploy anything.
 Build a shortlist from the leaderboard's open entries, then score them against
 your data. You can create the eval set inline in the same call by passing
 `task=` + `items=`.
+
+**Python**
 
 ```python
 # Shortlist: top open models off the leaderboard (these are deployable aliases).
@@ -148,6 +211,32 @@ run = pa.evals.runs.create(
 )
 ```
 
+**TypeScript**
+
+```typescript
+// Shortlist: top open models off the leaderboard (these are deployable aliases).
+const candidates = lb.models.filter((e) => e.kind === "open").slice(0, 3).map((e) => e.name);
+
+// Your data: one object per row. Shape depends on the task's scorer; for an
+// extraction task each row carries the input plus the expected fields.
+const items = [
+  { input: "MASTER SERVICES AGREEMENT ... Term: 24 months ... Fee: $48,000",
+    expected: { term_months: 24, annual_fee_usd: 48000 } },
+  { input: "STATEMENT OF WORK ... Term: 12 months ... Fee: $9,500",
+    expected: { term_months: 12, annual_fee_usd: 9500 } },
+  // ... more rows. More rows means tighter confidence intervals.
+];
+
+const run = await pa.evals.runs.create({
+  task: taskId,
+  items,
+  models: candidates,        // open candidates to score
+  frontier: "benchmarked",   // baselines on this task's leaderboard, for context
+  name: "contracts shortlist v1",
+  wait: true,                // block until terminal, then return the final run
+});
+```
+
 `evals.runs.create` parameters:
 
 - Provide **either** `eval_set=<id>` (an existing set) **or** `task=` + `items=`
@@ -171,6 +260,8 @@ and `ValueError` if `items` is empty.
 This call is metered. The org balance is debited for the open and frontier compute
 the run used. If the balance is empty it raises `InsufficientCreditsError`.
 
+**Python**
+
 ```python
 from pareta import InsufficientCreditsError
 
@@ -181,11 +272,30 @@ except InsufficientCreditsError:
     raise SystemExit("Org balance is empty. Top up in the dashboard (browser-only).")
 ```
 
+**TypeScript**
+
+```typescript
+import { InsufficientCreditsError } from "pareta";
+
+try {
+  const run = await pa.evals.runs.create({
+    task: taskId, items, models: candidates, frontier: "benchmarked", wait: true,
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    throw new Error("Org balance is empty. Top up in the dashboard (browser-only).");
+  }
+  throw e;
+}
+```
+
 ### Document and image tasks
 
 If `task.has_blob_input` is true, the rows reference binary documents (PDFs,
 scans). Create the set first, attach each file to its row, then start the run
 against the set id:
+
+**Python**
 
 ```python
 es = pa.evals.sets.create(task=task_id, items=items, name="contracts with PDFs")
@@ -196,6 +306,20 @@ pa.evals.sets.upload_document(es.id, "contracts/0001.pdf", idx=0, field_name="do
 
 run = pa.evals.runs.create(eval_set=es.id, models=candidates,
                            frontier="benchmarked", wait=True)
+```
+
+**TypeScript**
+
+```typescript
+const es = await pa.evals.sets.create({ task: taskId, items, name: "contracts with PDFs" });
+
+// Attach a PDF to row 0's "document" blob field. Files under 5 MiB go inline;
+// larger ones use a signed-URL upload. The SDK picks the path for you.
+await pa.evals.sets.uploadDocument(es.id, "contracts/0001.pdf", { idx: 0, fieldName: "document" });
+
+const run = await pa.evals.runs.create({
+  evalSet: es.id, models: candidates, frontier: "benchmarked", wait: true,
+});
 ```
 
 `upload_document` accepts a path (`str`/`Path`), raw `bytes`, or a binary
@@ -210,6 +334,8 @@ has `.model_id` (the per-task alias), `.kind` (`"open"` or `"frontier"`),
 `.quality_mean`, `.quality_ci_low` / `.quality_ci_high` (95% CI),
 `.mean_cost_micro_usd` (raw average cost per item), `.n_succeeded`, and
 `.error_count`.
+
+**Python**
 
 ```python
 print(f"run {run.id}: {run.status}")
@@ -229,6 +355,32 @@ if not open_results:
 
 winner = max(open_results, key=lambda r: (r.quality_mean or 0))
 print(f"\nwinner: {winner.model_id}  (quality {winner.quality_mean:.3f})")
+```
+
+**TypeScript**
+
+```typescript
+console.log(`run ${run.id}: ${run.status}`);
+console.log(`billed: $${run.cost} (${run.costMicroUsd} micro-USD)\n`);
+
+for (const r of [...run.results].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))) {
+  const costUsd = (r.meanCostMicroUsd ?? 0) / 1_000_000;
+  console.log(
+    `${r.modelId} ${r.kind} ` +
+    `q=${r.qualityMean?.toFixed(3)} [${r.qualityCiLow?.toFixed(3)}, ${r.qualityCiHigh?.toFixed(3)}]  ` +
+    `$${costUsd.toFixed(6)}/item  (${r.nSucceeded} ok, ${r.errorCount} err)`,
+  );
+}
+
+// The winner: the highest-quality OPEN model. Frontier rows are baselines only:
+// they are vendor APIs, not something you deploy here.
+const openResults = run.results.filter((r) => r.kind === "open");
+if (openResults.length === 0) {
+  throw new Error("No open candidates succeeded. Widen the shortlist.");
+}
+
+const winner = openResults.reduce((a, b) => ((b.qualityMean ?? 0) > (a.qualityMean ?? 0) ? b : a));
+console.log(`\nwinner: ${winner.modelId}  (quality ${winner.qualityMean?.toFixed(3)})`);
 ```
 
 Two money fields, two purposes:
@@ -251,6 +403,8 @@ Hand the winning alias straight to `deploy`. No hardware knob: Pareta resolves t
 serving class for the task and model. With `wait=True`, the call blocks through the
 deploy and returns the live `Endpoint`.
 
+**Python**
+
 ```python
 ep = pa.endpoints.deploy(
     task=task_id,
@@ -260,6 +414,19 @@ ep = pa.endpoints.deploy(
 )
 
 print(f"endpoint {ep.id}  status={ep.status}  live={ep.is_live}  url={ep.url}")
+```
+
+**TypeScript**
+
+```typescript
+const ep = await pa.endpoints.deploy({
+  task: taskId,
+  model: winner.modelId,   // the open alias from the eval, deployed as-is
+  name: "contracts-prod",  // optional; auto-generated if omitted
+  wait: true,
+});
+
+console.log(`endpoint ${ep.id}  status=${ep.status}  live=${ep.isLive}  url=${ep.url}`);
 ```
 
 `Endpoint` fields: `.id` (the name you pass to `chat.completions.create(model=...)`),
@@ -275,6 +442,8 @@ With `wait=False`, `deploy` returns an iterator of progress events. Each event i
 a `{"event": str, "data": dict}` dict. The stream ends with a `"complete"` event
 (its `data` carries the `Endpoint`) or an `"error"` event.
 
+**Python**
+
 ```python
 ep = None
 for event in pa.endpoints.deploy(task=task_id, model=winner.model_id):
@@ -286,12 +455,29 @@ for event in pa.endpoints.deploy(task=task_id, model=winner.model_id):
         raise SystemExit(f"deploy failed: {event['data']}")
 ```
 
+**TypeScript**
+
+```typescript
+let ep = null;
+for await (const event of pa.endpoints.deploy({ task: taskId, model: winner.modelId })) {
+  if (event.event === "progress") {
+    console.log("...", event.data);
+  } else if (event.event === "complete") {
+    ep = await pa.endpoints.retrieve(event.data.endpoint.id);
+  } else if (event.event === "error") {
+    throw new Error(`deploy failed: ${JSON.stringify(event.data)}`);
+  }
+}
+```
+
 With `wait=True` the SDK consumes this stream internally and raises `ParetaError`
 on an `"error"` event. `deploy` raises `ValueError` if `task` is missing.
 
 ## Step 6: Inference with `chat.completions.create`
 
 The deployed endpoint is OpenAI-compatible. Pass `ep.id` as the `model`:
+
+**Python**
 
 ```python
 resp = pa.chat.completions.create(
@@ -306,6 +492,21 @@ print(resp.choices[0].message.content)
 print(resp.usage.total_tokens, "tokens")
 ```
 
+**TypeScript**
+
+```typescript
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [
+    { role: "system", content: "Extract term_months and annual_fee_usd as JSON." },
+    { role: "user", content: "MASTER SERVICES AGREEMENT ... Term: 36 months ... Fee: $72,000" },
+  ],
+  temperature: 0,   // any OpenAI chat param passes straight through
+});
+console.log(resp.choices[0].message.content);
+console.log(resp.usage.totalTokens, "tokens");
+```
+
 `create` returns a `ChatCompletion` with `.id`, `.model`, `.created`, `.choices`
 (each `Choice` has `.index`, `.finish_reason`, `.message`), and `.usage`
 (`.prompt_tokens`, `.completion_tokens`, `.total_tokens`). It raises `ValueError`
@@ -317,9 +518,19 @@ on success, raising `InsufficientCreditsError` if the balance is empty.
 Pass `stream=True` for an iterator of `ChatCompletionChunk`. Each chunk's
 incremental text is at `.choices[0].delta.content`:
 
+**Python**
+
 ```python
 for chunk in pa.chat.completions.create(model=ep.id, messages=[...], stream=True):
     print(chunk.choices[0].delta.content or "", end="", flush=True)
+```
+
+**TypeScript**
+
+```typescript
+for await (const chunk of pa.chat.completions.create({ model: ep.id, messages: [...], stream: true })) {
+  process.stdout.write(chunk.choices[0].delta.content ?? "");
+}
 ```
 
 You never need this SDK to *call* the endpoint. Point the `openai` client at the
@@ -327,6 +538,8 @@ same `base_url` + your `pareta_sk_` key. The SDK's value is the control plane yo
 just walked: match, leaderboard, eval, deploy.
 
 ## The whole funnel
+
+**Python**
 
 ```python
 from pareta import Pareta, InsufficientCreditsError
@@ -365,6 +578,52 @@ resp = pa.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, InsufficientCreditsError } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+// 1. intent -> task
+const m = await pa.tasks.match("extract the key fields from a contract");
+if (!m.matched) throw new Error("no confident task match");
+const taskId = m.chosen.taskId;
+
+// 2. who leads this task
+const lb = await pa.tasks.leaderboard(taskId);
+const candidates = lb.models.filter((e) => e.kind === "open").slice(0, 3).map((e) => e.name);
+
+// 3. prove it on your data (open candidates + benchmarked frontier baselines)
+const items = [{ input: "...", expected: {} }];  // your rows
+let run;
+try {
+  run = await pa.evals.runs.create({
+    task: taskId, items, models: candidates, frontier: "benchmarked", wait: true,
+  });
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    throw new Error("Top up the org balance in the dashboard (browser-only).");
+  }
+  throw e;
+}
+
+// 4. pick the best OPEN model
+const winner = run.results
+  .filter((r) => r.kind === "open")
+  .reduce((a, b) => ((b.qualityMean ?? 0) > (a.qualityMean ?? 0) ? b : a));
+
+// 5. deploy it (Pareta resolves the hardware)
+const ep = await pa.endpoints.deploy({ task: taskId, model: winner.modelId, wait: true });
+
+// 6. infer (OpenAI-compatible)
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "Extract fields from: ..." }],
+});
+console.log(resp.choices[0].message.content);
+```
+
 ## Operating and measuring the live endpoint
 
 Once it is serving, operate it from code: `pa.endpoints.list()`,
@@ -379,6 +638,8 @@ and savings versus the frontier baseline.
 Every step has an async twin on `AsyncPareta`, with the same names and arguments,
 all `await`-ed. `wait=True` and `deploy(wait=False)` return awaitables and async
 iterators rather than their sync equivalents.
+
+**Python**
 
 ```python
 import asyncio
@@ -400,9 +661,35 @@ async def main():
 asyncio.run(main())
 ```
 
-Note: async `tasks` does not yet expose `leaderboard()` / `recommended()`. Fetch
-the catalog or leaderboard with the sync client (or hardcode the shortlist) when
-running the async path.
+**TypeScript**
+
+There is no `AsyncPareta` in TypeScript — the one `Pareta` client is already
+async. Every I/O method returns a `Promise` you `await`, and `leaderboard()` /
+`recommended()` are present on it (no sync-only gap to work around). So the whole
+funnel above *is* the async path; just call it inside an `async` function.
+
+```typescript
+import { Pareta } from "pareta";
+
+async function main() {
+  const pa = Pareta.fromEnv();
+  const m = await pa.tasks.match("extract the key fields from a contract");
+  const taskId = m.chosen.taskId;
+  const run = await pa.evals.runs.create({
+    task: taskId, items: [], models: [], frontier: "benchmarked", wait: true,
+  });
+  const winner = run.results
+    .filter((r) => r.kind === "open")
+    .reduce((a, b) => ((b.qualityMean ?? 0) > (a.qualityMean ?? 0) ? b : a));
+  const ep = await pa.endpoints.deploy({ task: taskId, model: winner.modelId, wait: true });
+  const resp = await pa.chat.completions.create({
+    model: ep.id, messages: [{ role: "user", content: "..." }],
+  });
+  console.log(resp.choices[0].message.content);
+}
+
+main();
+```
 
 ## Related
 

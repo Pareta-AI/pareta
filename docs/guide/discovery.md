@@ -28,10 +28,20 @@ Two platform facts shape everything below:
 
 All snippets assume:
 
+**Python**
+
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 ```
 
 ---
@@ -41,6 +51,8 @@ pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 `tasks.match(query, top_k=5)` turns a plain-English description into ranked
 candidate tasks. The matcher is a deterministic keyword scorer (with a semantic
 backstop on the backend), so the same query returns the same ranking.
+
+**Python**
 
 ```python
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
@@ -53,6 +65,23 @@ else:
     # No high-confidence hit - show the user the ranked alternates.
     for cand in match.candidates:
         print(f"  {cand.task_id}  score={cand.score:.2f}  {cand.confidence}")
+```
+
+**TypeScript**
+
+```typescript
+const match = await pa.tasks.match("pull line items and totals out of vendor invoices");
+
+if (match.matched) {
+  const taskId = match.chosen!.taskId;        // the best task
+  console.log(`matched ${taskId} via ${match.matcher} `
+    + `(confidence=${match.chosen!.confidence})`);
+} else {
+  // No high-confidence hit - show the user the ranked alternates.
+  for (const cand of match.candidates) {
+    console.log(`  ${cand.taskId}  score=${cand.score?.toFixed(2)}  ${cand.confidence}`);
+  }
+}
 ```
 
 `match` returns a [`TaskMatch`](#taskmatch):
@@ -70,6 +99,8 @@ else:
 A robust pattern handles the no-match and ambiguous cases instead of blindly
 trusting `chosen`:
 
+**Python**
+
 ```python
 match = pa.tasks.match("classify support tickets by urgency")
 
@@ -83,6 +114,23 @@ if match.ambiguous:
 task_id = match.chosen.task_id
 ```
 
+**TypeScript**
+
+```typescript
+const match = await pa.tasks.match("classify support tickets by urgency");
+
+if (!match.matched) {
+  throw new Error(`no task matched; closest: `
+    + `${match.candidates.map((c) => c.taskId)}`);
+}
+if (match.ambiguous) {
+  console.log("ambiguous - top candidates:",
+    match.candidates.slice(0, 2).map((c) => [c.taskId, Math.round((c.score ?? 0) * 100) / 100]));
+}
+
+const taskId = match.chosen!.taskId;
+```
+
 `match` raises `ValueError` if `query` is empty or whitespace.
 
 ### Inspecting the task
@@ -92,9 +140,18 @@ field is `has_blob_input`: `True` means the task takes documents or images (PDFs
 scans), which determines how you build eval sets and which frontier models can
 run it.
 
+**Python**
+
 ```python
 task = pa.tasks.retrieve(task_id, examples_n=3)
 print(task.id, task.default_scorer, "blob_input=", task.has_blob_input)
+```
+
+**TypeScript**
+
+```typescript
+const task = await pa.tasks.retrieve(taskId, { examplesN: 3 });
+console.log(task.id, task.defaultScorer, "blob_input=", task.hasBlobInput);
 ```
 
 - `default_scorer: str | None` - the scorer used to grade outputs on this task.
@@ -113,6 +170,8 @@ returns `list[Task]`.
 quality, with the per-request cost for each. This is how you choose between open
 models and see, concretely, how far below the frontier the cost sits.
 
+**Python**
+
 ```python
 board = pa.tasks.leaderboard(task_id)
 
@@ -129,6 +188,28 @@ if board.frontier:
     f = board.frontier
     print(f"frontier baseline: {f.name}  quality={f.quality:.3f}  "
           f"${(f.cost_per_request_micro_usd or 0) / 1_000_000:.6f}/req")
+```
+
+**TypeScript**
+
+```typescript
+const board = await pa.tasks.leaderboard(taskId);
+
+console.log(`metric=${board.metric}  cost_unit=${board.costUnit}`);
+console.log(`recommended: ${board.recommended}`);
+
+for (const entry of board.models) {
+  const cost = entry.costPerRequestMicroUsd ?? 0;
+  console.log(`  ${entry.name}  ${entry.kind}  `
+    + `quality=${entry.quality?.toFixed(3)}  `
+    + `$${(cost / 1_000_000).toFixed(6)}/req  ctx=${entry.contextK}k`);
+}
+
+if (board.frontier) {
+  const f = board.frontier;
+  console.log(`frontier baseline: ${f.name}  quality=${f.quality?.toFixed(3)}  `
+    + `$${((f.costPerRequestMicroUsd ?? 0) / 1_000_000).toFixed(6)}/req`);
+}
 ```
 
 `leaderboard` returns a [`Leaderboard`](#leaderboard):
@@ -157,10 +238,20 @@ If you only want the deployable pick and don't need the full ranking,
 `tasks.recommended(task_id)` is a convenience wrapper over
 `leaderboard(task_id).recommended`:
 
+**Python**
+
 ```python
 model = pa.tasks.recommended(task_id)        # e.g. "qwen-1" or "recommended"
 ep = pa.endpoints.deploy(task=task_id, model=model, wait=True)
 print(ep.id, ep.status)
+```
+
+**TypeScript**
+
+```typescript
+const model = await pa.tasks.recommended(taskId);   // e.g. "qwen-1" or "recommended"
+const ep = await pa.endpoints.deploy({ task: taskId, model: model ?? undefined, wait: true });
+console.log(ep.id, ep.status);
 ```
 
 Passing `model="recommended"` to `deploy` does the same resolution server-side,
@@ -180,6 +271,8 @@ Picking the recommended open model is the start; the point of Pareta is showing
 it holds up against the frontier at a fraction of the cost. `evals.frontier_models`
 returns the vendor roster you can put in an eval run as baselines.
 
+**Python**
+
 ```python
 roster = pa.evals.frontier_models(task=task_id)
 
@@ -190,6 +283,19 @@ for fm in roster:
     if fm.benchmarked:
         flags.append("benchmarked")
     print(f"  {fm.id:<28} {fm.vendor:<10} {' '.join(flags)}")
+```
+
+**TypeScript**
+
+```typescript
+const roster = await pa.evals.frontierModels(taskId);
+
+for (const fm of roster) {
+  const flags: string[] = [];
+  if (fm.vision) flags.push("vision");
+  if (fm.benchmarked) flags.push("benchmarked");
+  console.log(`  ${fm.id}  ${fm.vendor}  ${flags.join(" ")}`);
+}
 ```
 
 Each entry is a [`FrontierModel`](#frontiermodel):
@@ -205,6 +311,8 @@ Each entry is a [`FrontierModel`](#frontiermodel):
 With it, Pareta annotates `benchmarked` and filters the roster by capability - for a document task (`has_blob_input == True`) that means vision-capable models
 only, so you won't pick a baseline that physically cannot read the input.
 
+**Python**
+
 ```python
 # All frontier models, no task context (no benchmarked flag, no filtering)
 everything = pa.evals.frontier_models()
@@ -213,10 +321,22 @@ everything = pa.evals.frontier_models()
 for_task = pa.evals.frontier_models(task=task_id)
 ```
 
+**TypeScript**
+
+```typescript
+// All frontier models, no task context (no benchmarked flag, no filtering)
+const everything = await pa.evals.frontierModels();
+
+// Scoped to a document task: vision-filtered + benchmarked-annotated
+const forTask = await pa.evals.frontierModels(taskId);
+```
+
 ### Feeding the roster into a run
 
 You can pass explicit frontier ids, or let the SDK resolve a roster keyword for
 you. These two are equivalent when the keyword is `"benchmarked"`:
+
+**Python**
 
 ```python
 # Explicit: filter the roster yourself
@@ -235,6 +355,29 @@ run = pa.evals.runs.create(
     frontier="benchmarked",                   # "all" | "benchmarked" | "none" | [ids]
     wait=True,
 )
+```
+
+**TypeScript**
+
+```typescript
+// Explicit: filter the roster yourself
+const ids = (await pa.evals.frontierModels(taskId))
+  .filter((fm) => fm.benchmarked)
+  .map((fm) => fm.id!);
+let run = await pa.evals.runs.create({
+  evalSet: "es_…",
+  models: [(await pa.tasks.recommended(taskId))!],   // the open candidate(s)
+  frontier: ids,                                     // explicit list of vendor ids
+  wait: true,
+});
+
+// Keyword: the SDK fetches + filters the roster for you
+run = await pa.evals.runs.create({
+  evalSet: "es_…",
+  models: [(await pa.tasks.recommended(taskId))!],
+  frontier: "benchmarked",                           // "all" | "benchmarked" | "none" | [ids]
+  wait: true,
+});
 ```
 
 The `frontier=` keyword resolves SDK-side before the request is sent:
@@ -259,6 +402,8 @@ run lifecycle, results, and cost.
 End to end: intent in, recommended open model + a benchmarked frontier baseline
 out, ready to hand to a deploy or an eval.
 
+**Python**
+
 ```python
 from pareta import Pareta
 
@@ -281,6 +426,35 @@ baselines = [fm.id for fm in pa.evals.frontier_models(task=task_id) if fm.benchm
 print(f"baselines: {baselines}")
 
 # now: deploy `pick`, or eval `pick` vs `baselines` on your own data.
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+// 1. intent -> task
+const match = await pa.tasks.match("extract key fields from contracts");
+if (!match.matched) {
+  throw new Error(`no task matched: ${match.candidates.map((c) => c.taskId)}`);
+}
+const taskId = match.chosen!.taskId;
+
+// 2. task -> recommended open model + the open-vs-frontier gap
+const board = await pa.tasks.leaderboard(taskId);
+const pick = board.recommended;
+const gap = board.frontier ? board.frontier.quality : null;
+console.log(`task=${taskId}  recommend=${pick}  frontier_quality=${gap}`);
+
+// 3. the vendor baselines worth measuring against (vision-filtered, annotated)
+const baselines = (await pa.evals.frontierModels(taskId))
+  .filter((fm) => fm.benchmarked)
+  .map((fm) => fm.id!);
+console.log(`baselines: ${baselines}`);
+
+// now: deploy `pick`, or eval `pick` vs `baselines` on your own data.
 ```
 
 Metering note: discovery itself (`match`, `leaderboard`, `recommended`,

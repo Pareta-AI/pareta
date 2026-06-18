@@ -39,6 +39,8 @@ The cleanest path is to put your key in the environment and let the client read 
 export PARETA_API_KEY="pareta_sk_..."
 ```
 
+**Python**
+
 ```python
 from pareta import Pareta
 
@@ -49,11 +51,26 @@ for model in pa.models.list():
     print(model.id, model.owned_by)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();                  // reads PARETA_API_KEY (+ PARETA_BASE_URL)
+
+// List the deployed endpoints your org can call.
+for (const model of await pa.models.list()) {
+  console.log(model.id, model.ownedBy);
+}
+```
+
 Keeping the key out of source is the point — `from_env()` means your code carries no secret.
 
 ### Explicit key
 
 You can also pass the key directly. The constructor is keyword-only:
+
+**Python**
 
 ```python
 from pareta import Pareta
@@ -61,7 +78,17 @@ from pareta import Pareta
 pa = Pareta(api_key="pareta_sk_...")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = new Pareta({ apiKey: "pareta_sk_..." });
+```
+
 If `api_key` is falsy and `PARETA_API_KEY` is unset, the client raises `ParetaError` at construction time with a message pointing you to mint a key:
+
+**Python**
 
 ```python
 import pareta
@@ -72,7 +99,23 @@ except pareta.ParetaError as e:
     print(e)  # missing API key. Pass api_key=… or set PARETA_API_KEY (mint a pareta_sk_ key in the dashboard).
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, ParetaError } from "pareta";
+
+try {
+  const pa = new Pareta({ apiKey: undefined }); // and PARETA_API_KEY unset
+} catch (e) {
+  if (e instanceof ParetaError) {
+    console.log(e.message); // missing API key. Pass apiKey: … or use Pareta.fromEnv() with PARETA_API_KEY (mint a pareta_sk_ key in the dashboard).
+  }
+}
+```
+
 ## Constructor options
+
+**Python**
 
 ```python
 Pareta(
@@ -84,6 +127,18 @@ Pareta(
 )
 ```
 
+**TypeScript**
+
+```typescript
+new Pareta({
+  apiKey?: string,        // pareta_sk_ key; falls back to nothing (fromEnv reads the env)
+  baseURL?: string,       // defaults to "https://api.pareta.ai"
+  timeout?: number,       // milliseconds; defaults to 60_000
+  maxRetries?: number,    // default 2; retries on 408/409/429/500/502/503/504
+  fetch?: typeof fetch,   // inject your own fetch implementation
+});
+```
+
 - **`base_url`** defaults to the production API, `https://api.pareta.ai`, and is normalized (trailing slash stripped). Override it only to point at a non-prod environment; set `PARETA_BASE_URL` to do the same via `from_env()`.
 - **`max_retries`** (default 2) retries idempotent failures and rate limits with exponential backoff that honors a `Retry-After` header. See [Errors & retries](errors-and-retries.md).
 - **`http_client`** lets you supply a pre-configured `httpx.Client` (custom proxies, connection limits, transport). When you pass one, the SDK does not own it and `close()` will not shut it down.
@@ -91,6 +146,8 @@ Pareta(
 ## Manage the connection
 
 The client holds a pooled HTTP connection. Use it as a context manager so the pool is released cleanly:
+
+**Python**
 
 ```python
 from pareta import Pareta
@@ -103,11 +160,26 @@ with Pareta.from_env() as pa:
     print(resp.choices[0].message.content)
 ```
 
-Outside a `with` block, call `pa.close()` when you are done. (`close()` is a no-op when you supplied your own `http_client`.)
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const resp = await pa.chat.completions.create({
+  model: "ep_invoice_extract",            // an endpoint id from pa.models.list() or endpoints.deploy()
+  messages: [{ role: "user", content: "Extract the total from this invoice: ..." }],
+});
+console.log(resp.choices[0].message.content);
+```
+
+Outside a `with` block, call `pa.close()` when you are done. (`close()` is a no-op when you supplied your own `http_client`.) The TypeScript client holds no owned connection — it uses `fetch` per request, so there is nothing to close.
 
 ## Async client
 
 `AsyncPareta` mirrors `Pareta` exactly — same constructor, same `from_env()`, same resource namespaces — with awaitable methods and `aclose()` / `async with`:
+
+**Python**
 
 ```python
 import asyncio
@@ -124,9 +196,26 @@ async def main():
 asyncio.run(main())
 ```
 
+**TypeScript**
+
+There is no `AsyncPareta` in TypeScript — there is one `Pareta` client and it is already async. Every I/O method returns a `Promise` you `await` (and streaming methods return an `AsyncIterable` you drive with `for await`). The same client works in sync-looking and concurrent code; there is no separate sync/async split to choose between.
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const resp = await pa.chat.completions.create({
+  model: "ep_invoice_extract",
+  messages: [{ role: "user", content: "Summarize this contract clause: ..." }],
+});
+console.log(resp.choices[0].message.content);
+```
+
 ## Your first metered call
 
 Inference debits your org balance on success. If the balance is empty, the call raises `InsufficientCreditsError` (402) — top up in the dashboard, which is the only place billing lives:
+
+**Python**
 
 ```python
 from pareta import Pareta, InsufficientCreditsError
@@ -145,11 +234,37 @@ except InsufficientCreditsError:
     print("Org out of credit — top up in the dashboard.")
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta, InsufficientCreditsError } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+try {
+  const resp = await pa.chat.completions.create({
+    model: "ep_invoice_extract",
+    messages: [{ role: "user", content: "What is the invoice number?" }],
+    temperature: 0,                        // extra OpenAI params pass straight through
+  });
+  console.log(resp.choices[0].message.content);
+  console.log(resp.usage.totalTokens, "tokens");
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Org out of credit — top up in the dashboard.");
+  } else {
+    throw e;
+  }
+}
+```
+
 The `model` is an endpoint id — anything from `pa.models.list()` or returned by `endpoints.deploy()`. See [Inference](./inference.md) for streaming and the full chat-completions surface.
 
 ## Zero-install alternative for inference
 
 You do not need this SDK to *call* a deployed endpoint. Because inference is OpenAI-compatible, you can point the stock `openai` client at Pareta's `base_url` and use the same `pareta_sk_` key:
+
+**Python**
 
 ```python
 from openai import OpenAI
@@ -161,6 +276,20 @@ resp = client.chat.completions.create(
     messages=[{"role": "user", "content": "What is the invoice number?"}],
 )
 print(resp.choices[0].message.content)
+```
+
+**TypeScript**
+
+```typescript
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: "pareta_sk_...", baseURL: "https://api.pareta.ai/v1" });
+
+const resp = await client.chat.completions.create({
+  model: "ep_invoice_extract",
+  messages: [{ role: "user", content: "What is the invoice number?" }],
+});
+console.log(resp.choices[0].message.content);
 ```
 
 This is handy for inference-only workloads or dropping Pareta into an existing OpenAI codebase. The `pareta` SDK's distinct value is the **control plane** that the OpenAI client cannot reach: deploying and operating endpoints, browsing the benchmark catalog, and running evals against your own data.

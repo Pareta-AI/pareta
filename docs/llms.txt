@@ -1,6 +1,8 @@
 # Pareta
 
-> Pareta is a marketplace + control plane for open-weights models. The `pareta` Python SDK lets you deploy task-specific open-weights endpoints (Pareta picks the GPU), run metered OpenAI-compatible inference, browse a per-task benchmark catalog, and evaluate models on your own data — then deploy the winner. Install with `pip install pareta`; authenticate with a `pareta_sk_` key from the dashboard or `PARETA_API_KEY`.
+> Pareta is a marketplace + control plane for open-weights models. Its SDKs let you deploy task-specific open-weights endpoints (Pareta picks the GPU), run metered OpenAI-compatible inference, browse a per-task benchmark catalog, and evaluate models on your own data — then deploy the winner. Authenticate with a `pareta_sk_` key from the dashboard or the `PARETA_API_KEY` environment variable.
+
+Pareta ships one SDK per language, all sharing these docs and the same `/v1` HTTP API: Python (`pip install pareta`, `from pareta import Pareta`); TypeScript/JavaScript (`npm install pareta`, `import { Pareta } from "pareta"`).
 
 
 ## Guide
@@ -41,5 +43,5 @@
 
 ## Optional
 
-- [OpenAPI spec](https://docs.pareta.ai/openapi.json): machine-readable contract for the underlying /v1 HTTP API the SDK wraps.
+- [OpenAPI spec](https://docs.pareta.ai/openapi.json): machine-readable contract for the underlying /v1 HTTP API the SDKs wrap.
 - [llms-full.txt](https://docs.pareta.ai/llms-full.txt): the entire docs in one file.

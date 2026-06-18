@@ -18,13 +18,25 @@ Three platform truths shape this whole page:
   [`InsufficientCreditsError`](errors-and-retries.md) (402) on an empty balance.
   Top-up is browser-only.
 
+**Python**
+
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
+```
+
 ## Deploy an endpoint
+
+**Python**
 
 ```python
 ep = pa.endpoints.deploy(
@@ -35,7 +47,20 @@ ep = pa.endpoints.deploy(
 print(ep.id, ep.status, ep.url)   # e.g. "ep_a1b2c3 live https://…"
 ```
 
+**TypeScript**
+
+```typescript
+const ep = await pa.endpoints.deploy({
+  task: "contract-key-fields",
+  model: "recommended",   // default — Pareta picks the task's best open model
+  wait: true,
+});
+console.log(ep.id, ep.status, ep.url);   // e.g. "ep_a1b2c3 live https://…"
+```
+
 Signature:
+
+**Python**
 
 ```python
 endpoints.deploy(
@@ -46,6 +71,18 @@ endpoints.deploy(
     wait: bool = False,
     **extra,                   # passed through to the backend
 ) -> Iterator[dict] | Endpoint
+```
+
+**TypeScript**
+
+```typescript
+endpoints.deploy(params: {
+  task: string;              // required: a subtask id, e.g. "contract-key-fields"
+  model?: string;            // defaults to "recommended"
+  name?: string;             // auto-generated if omitted
+  wait?: boolean;            // defaults to false
+  [key: string]: unknown;    // passed through to the backend
+}): AsyncIterable<{ event: string; data: unknown }> | Promise<Endpoint>
 ```
 
 - `task` (required) is a catalog subtask id. Discover one with
@@ -66,6 +103,8 @@ The simplest path. `deploy(wait=True)` consumes the deploy stream internally,
 blocks until the endpoint is live, and returns the `Endpoint`. If the deploy
 fails, it raises `ParetaError`.
 
+**Python**
+
 ```python
 ep = pa.endpoints.deploy(task="contract-key-fields", wait=True)
 
@@ -82,11 +121,31 @@ resp = pa.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+**TypeScript**
+
+```typescript
+const ep = await pa.endpoints.deploy({ task: "contract-key-fields", wait: true });
+
+console.assert(ep.isLive);       // status == "live"
+console.log(ep.id);              // pass this to chat.completions.create({ model })
+console.log(ep.model);           // per-task public alias that got deployed
+console.log(ep.url);             // OpenAI-compatible inference URL
+
+// Use it immediately — metered against your org balance.
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "Extract the parties and effective date." }],
+});
+console.log(resp.choices[0].message.content);
+```
+
 ### `wait=False` — stream deploy progress (default)
 
 With `wait=False` (the default), `deploy()` returns an iterator of named
 progress events so you can render a deploy UI or log stages. Each event is a
 `{"event": str, "data": dict}` dict.
+
+**Python**
 
 ```python
 endpoint = None
@@ -102,6 +161,24 @@ for ev in pa.endpoints.deploy(task="contract-key-fields"):
         raise RuntimeError(ev["data"].get("message", "deploy failed"))
 ```
 
+**TypeScript**
+
+```typescript
+let endpoint = null;
+for await (const ev of pa.endpoints.deploy({ task: "contract-key-fields" })) {
+  if (ev.event === "progress") {
+    // data carries the deploy stage status, e.g. { stage: "pulling weights", pct: 45 }
+    console.log("progress:", ev.data);
+  } else if (ev.event === "complete") {
+    endpoint = ev.data.endpoint;   // the live endpoint payload (object)
+    console.log("live:", endpoint);
+  } else if (ev.event === "error") {
+    // The SDK throws ParetaError for you on wait: true; here you handle it.
+    throw new Error(ev.data?.message ?? "deploy failed");
+  }
+}
+```
+
 The terminal event is `"complete"` (its `data.endpoint` is the live endpoint)
 or `"error"`. The stream always ends on one of them; if it ends without a
 `"complete"`, the SDK raises `ParetaError`.
@@ -111,6 +188,8 @@ want to surface live progress.
 
 ## List, retrieve, and address endpoints
 
+**Python**
+
 ```python
 # Every endpoint your org can access.
 for ep in pa.endpoints.list():
@@ -119,6 +198,19 @@ for ep in pa.endpoints.list():
 # One endpoint by id.
 ep = pa.endpoints.retrieve("ep_a1b2c3")
 print(ep.is_live, ep.url)
+```
+
+**TypeScript**
+
+```typescript
+// Every endpoint your org can access.
+for (const ep of await pa.endpoints.list()) {
+  console.log(ep.id, ep.status, ep.task, ep.model);
+}
+
+// One endpoint by id.
+const ep = await pa.endpoints.retrieve("ep_a1b2c3");
+console.log(ep.isLive, ep.url);
 ```
 
 `Endpoint` fields:
@@ -142,15 +234,27 @@ OpenAI-compatible subset (only deployed, url-bearing endpoints, shaped as
 A stopped endpoint costs nothing to keep but cannot serve. Stop it to pause
 spend, start it to resume, delete it to remove it for good.
 
+**Python**
+
 ```python
 pa.endpoints.stop("ep_a1b2c3")      # pause a live endpoint
 pa.endpoints.start("ep_a1b2c3")     # resume a stopped one
 pa.endpoints.delete("ep_a1b2c3")    # remove it (returns None)
 ```
 
+**TypeScript**
+
+```typescript
+await pa.endpoints.stop("ep_a1b2c3");      // pause a live endpoint
+await pa.endpoints.start("ep_a1b2c3");     // resume a stopped one
+await pa.endpoints.delete("ep_a1b2c3");    // remove it (returns void)
+```
+
 While an endpoint is stopped or still cold, inference calls against it raise
 [`EndpointNotReadyError`](errors-and-retries.md) (503). Call `start()` and wait
 for `retrieve(id).is_live` before sending traffic.
+
+**Python**
 
 ```python
 pa.endpoints.start("ep_a1b2c3")
@@ -158,11 +262,22 @@ while not pa.endpoints.retrieve("ep_a1b2c3").is_live:
     time.sleep(3)
 ```
 
+**TypeScript**
+
+```typescript
+await pa.endpoints.start("ep_a1b2c3");
+while (!(await pa.endpoints.retrieve("ep_a1b2c3")).isLive) {
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+}
+```
+
 ## Measure an endpoint
 
 `endpoints.metrics(id)` returns a `Metrics` handle with one method per
 observability dimension. Each returns raw metric JSON (typed models are coming
 in a later slice) and accepts arbitrary query params as keyword arguments.
+
+**Python**
 
 ```python
 m = pa.endpoints.metrics("ep_a1b2c3")
@@ -176,6 +291,22 @@ m.activity()      # usage stats
 # Params pass straight through to the query string:
 m.performance(window="24h")
 m.cost(group_by="day")
+```
+
+**TypeScript**
+
+```typescript
+const m = pa.endpoints.metrics("ep_a1b2c3");   // handle is NOT awaited
+
+await m.performance();   // p50/p95/p99 latency
+await m.uptime();        // availability
+await m.cost();          // per-endpoint spend + vs-frontier savings
+await m.quality();       // judge windows
+await m.activity();      // usage stats
+
+// Params pass straight through to the query string:
+await m.performance({ window: "24h" });
+await m.cost({ group_by: "day" });
 ```
 
 | Method | Returns |
@@ -193,6 +324,8 @@ account balance. Balance and top-up live in the dashboard only.
 ## End to end
 
 Discover a task, deploy its recommended model, serve traffic, then tear down.
+
+**Python**
 
 ```python
 from pareta import Pareta
@@ -220,12 +353,43 @@ with Pareta.from_env() as pa:
     pa.endpoints.stop(ep.id)
 ```
 
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+// 1. Find a task for your intent.
+const match = await pa.tasks.match("pull key fields out of contracts");
+const taskId = match.chosen?.taskId;          // e.g. "contract-key-fields"
+
+// 2. Deploy the recommended open model (no GPU knob).
+const ep = await pa.endpoints.deploy({ task: taskId, model: "recommended", wait: true });
+console.log(`live: ${ep.id} serving ${ep.model}`);
+
+// 3. Run metered inference (debits the org balance).
+const resp = await pa.chat.completions.create({
+  model: ep.id,
+  messages: [{ role: "user", content: "Extract the governing-law clause." }],
+});
+console.log(resp.choices[0].message.content);
+
+// 4. Check what it cost and how it performed.
+console.log(await pa.endpoints.metrics(ep.id).cost());
+
+// 5. Stop it to pause spend (or delete it to remove it).
+await pa.endpoints.stop(ep.id);
+```
+
 ## Async
 
 `AsyncPareta` mirrors the sync surface. `deploy()`, `list()`, `retrieve()`,
 `start()`, `stop()`, and `delete()` are `async def`. `metrics(id)` returns an
 `AsyncMetrics` handle synchronously (it is not a coroutine), and its dimension
 methods are awaitable.
+
+**Python**
 
 ```python
 from pareta import AsyncPareta
@@ -243,6 +407,31 @@ async with AsyncPareta.from_env() as pa:
     print(await m.performance())            # the dimension call IS awaited
 
     await pa.endpoints.stop(ep.id)
+```
+
+**TypeScript**
+
+```typescript
+// There is no AsyncPareta in TS — the one `Pareta` client is already
+// Promise-based, so the sync/async split simply doesn't exist here.
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+
+// wait: true awaits the deploy and resolves the live Endpoint.
+const ep = await pa.endpoints.deploy({ task: "contract-key-fields", wait: true });
+
+// wait: false returns an async progress-event iterator.
+for await (const ev of pa.endpoints.deploy({ task: "contract-key-fields" })) {
+  if (ev.event === "complete") {
+    console.log("live:", ev.data.endpoint);
+  }
+}
+
+const m = pa.endpoints.metrics(ep.id);   // NOT awaited — returns the handle
+console.log(await m.performance());      // the dimension call IS awaited
+
+await pa.endpoints.stop(ep.id);
 ```
 
 ## Errors you will hit here
