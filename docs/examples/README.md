@@ -1,6 +1,6 @@
 # Examples
 
-Complete, runnable workflows for real jobs. Each page is self-contained and uses the real SDK surface end to end: `Pareta.from_env()`, deploy a model (no GPU knob), call it with OpenAI-compatible inference, and read the metered cost in dollars off `run.cost`. Grouped by what you are trying to do.
+Complete, runnable workflows for real jobs, in **Python and TypeScript**. Each page is self-contained and uses the real SDK surface end to end (`Pareta.from_env()` / `Pareta.fromEnv()`): deploy a model (no GPU knob), call it with OpenAI-compatible inference, and read the metered cost in dollars off `run.cost`. Grouped by what you are trying to do.
 
 ## Deploy and call a model
 

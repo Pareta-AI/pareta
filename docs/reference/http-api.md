@@ -1,6 +1,6 @@
 # Underlying HTTP API
 
-The Pareta Python SDK is a thin, typed wrapper over a plain JSON-over-HTTPS API
+The Pareta SDKs (Python and TypeScript) are thin, typed wrappers over a plain JSON-over-HTTPS API
 served at `https://api.pareta.ai` under the `/v1/` prefix. Every method you call
 maps to exactly one route (a couple of ergonomic helpers fan out to two or
 three). This page is the lookup table: for each SDK method, the HTTP method,

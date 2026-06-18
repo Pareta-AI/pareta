@@ -1,6 +1,6 @@
 # Reference
 
-Field-by-field API docs for the Pareta SDK. Everything hangs off one client object, `Pareta` (and its async mirror `AsyncPareta`); the resource pages document the five namespaces that live on it. Conventions that hold everywhere: model ids you pass and read are per-task aliases, inference and evals are metered against your org balance, and money appears as a dollars `Decimal` on `.cost` with the raw integer on `.cost_micro_usd`.
+Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the **TypeScript** SDK mirrors them (a single Promise-only `Pareta` client, camelCase names, `await`ed calls). Everything hangs off one client object, `Pareta` (Python also ships an async mirror, `AsyncPareta`); the resource pages document the five namespaces that live on it. Conventions that hold everywhere: model ids you pass and read are per-task aliases, inference and evals are metered against your org balance, and money appears on `.cost` (a dollars `Decimal` in Python, a fixed-2dp string in TypeScript) with the raw integer on `.cost_micro_usd` / `.costMicroUsd`.
 
 ## Client
 
