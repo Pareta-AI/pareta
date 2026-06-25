@@ -5,21 +5,27 @@ inference as Model Context Protocol tools over stdio. The agent calls these
 tools; the MCP client gates each call behind its own per-tool approval, which is
 the only guardrail on the provisioning verbs (deploy / start / stop / delete).
 
-Install + register
-------------------
-    pip install "pareta[mcp]"
-
-Then add the server to your MCP client. For Claude Desktop, edit
-`claude_desktop_config.json` (Settings → Developer → Edit Config):
+Install + register (run it in its own isolated env — like any MCP server)
+-------------------------------------------------------------------------
+Easiest is uvx (no install): point your MCP client's `command` at `uvx`. For
+Claude Desktop, edit `claude_desktop_config.json` (Settings → Developer →
+Edit Config):
 
     {
       "mcpServers": {
         "pareta": {
-          "command": "pareta-mcp",
+          "command": "uvx",
+          "args": ["--from", "pareta[mcp]", "pareta-mcp"],
           "env": { "PARETA_API_KEY": "pareta_sk_…" }
         }
       }
     }
+
+Prefer a persistent install? `pipx install "pareta[mcp]"` puts `pareta-mcp` on
+PATH in a dedicated venv; then use `"command": "pareta-mcp"`. Avoid a plain
+`pip install "pareta[mcp]"` into a shared/app environment — its mcp/starlette
+dependencies can clash with e.g. FastAPI, and the console script may not be on
+your PATH.
 
 `PARETA_API_KEY` is required (mint a `pareta_sk_` key in the dashboard);
 `PARETA_BASE_URL` is optional and defaults to https://api.pareta.ai. The key is
@@ -28,7 +34,7 @@ you just get a clear error back when a tool runs.
 
 Run it directly for a smoke test:
 
-    PARETA_API_KEY=pareta_sk_… pareta-mcp
+    PARETA_API_KEY=pareta_sk_… uvx --from "pareta[mcp]" pareta-mcp
 """
 
 from __future__ import annotations

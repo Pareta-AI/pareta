@@ -66,7 +66,8 @@ below.
 ## CLI
 
 `pip install "pareta[cli]"` adds the `pareta` command — the same control plane
-from your shell:
+from your shell (or `pipx install "pareta[cli]"` for an isolated, always-on-PATH
+install):
 
 ```bash
 export PARETA_API_KEY=pareta_sk_…
@@ -85,22 +86,33 @@ Add `--json` to any command for machine-readable output; `pareta --help` (or
 
 ## MCP server
 
-`pip install "pareta[mcp]"` adds `pareta-mcp`, a
-[Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-Pareta to an AI agent (Claude Desktop, Cursor, …) as tools — so the agent can
-*find the best open model for a task, benchmark it on your data, and deploy it*.
-Register it (Claude Desktop → Settings → Developer → Edit Config):
+`pareta-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server (stdio) that exposes Pareta to an AI agent (Claude Desktop, Cursor, …) as
+tools — so the agent can *find the best open model for a task, benchmark it on
+your data, and deploy it*.
+
+Run it in **its own isolated environment** — like any MCP server it has its own
+dependency tree, so don't `pip install` it into an app/project venv. The simplest
+is [`uvx`](https://docs.astral.sh/uv/) (no install, runs on demand). Register it
+(Claude Desktop → Settings → Developer → Edit Config):
 
 ```json
 {
   "mcpServers": {
     "pareta": {
-      "command": "pareta-mcp",
+      "command": "uvx",
+      "args": ["--from", "pareta[mcp]", "pareta-mcp"],
       "env": { "PARETA_API_KEY": "pareta_sk_…" }
     }
   }
 }
 ```
+
+Prefer a persistent install? `pipx install "pareta[mcp]"` puts `pareta-mcp` on
+your PATH in a dedicated venv — then use `"command": "pareta-mcp"`. (Avoid a plain
+`pip install "pareta[mcp]"` into a shared environment: its `mcp`/`starlette`
+dependencies can clash with an app's FastAPI, and the console script may not land
+on your PATH.)
 
 It exposes the full surface — discovery (`match_task`, `get_leaderboard`, …),
 provisioning (`deploy_endpoint`, `start` / `stop` / `delete`), eval (`run_eval`),
