@@ -42,27 +42,36 @@ def match(self, query: str, *, top_k: int = 5) -> TaskMatch
 
 **Route:** `POST /v1/tasks/match`
 
-Turns a free-text description of your intent into ranked candidate tasks. The
-matcher is a deterministic keyword scorer (with a semantic backstop on the
-backend), so the same query returns the same ranking.
+Turns a free-text description of your intent into a single match. The matcher is
+an LLM reasoning router: it reasons about intent (not keyword overlap) and maps
+the query to exactly one of three outcomes — a benchmarked task, a general
+**capability** lane (chat, coding, agentic, vision, speech-to-text,
+text-to-speech), or `"unsupported"`. If the router is unavailable it falls back
+to a deterministic keyword scorer.
 
 - `query` (required): free-text intent. Raises `ValueError` if empty or
   whitespace-only.
-- `top_k` (default `5`): how many ranked candidates to return.
+- `top_k` (default `5`): how many ranked candidates the keyword fallback returns.
+  The reasoning router returns a single chosen match (it does not rank).
 
-Returns a [`TaskMatch`](#taskmatch).
+Returns a [`TaskMatch`](#taskmatch). Branch on `match.type` to route every
+outcome; the reasoning router also fills `match.reasoning`, `match.confidence`,
+and `match.capability` (a typed [`Capability`](types.md#capability)).
 
 ```python
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
 
-if match.matched:
+if match.type == "task":
     task_id = match.chosen.task_id          # the best task
     print(f"matched {task_id} via {match.matcher} "
-          f"(confidence={match.chosen.confidence})")
-else:
-    # No high-confidence hit: show the ranked alternates instead of guessing.
-    for cand in match.candidates:
-        print(f"  {cand.task_id}  score={cand.score:.2f}  {cand.confidence}")
+          f"(confidence={match.confidence})")
+elif match.type == "capability":
+    cap = match.capability                  # typed Capability
+    print(f"general lane: {cap.label} ({cap.id})")
+else:                                       # "unsupported" / "none"
+    print(f"{match.type}: {match.reasoning}")
+    for cand in match.candidates:           # keyword fallback may rank some
+        print(f"  {cand.task_id}  score={cand.score}  {cand.confidence}")
 ```
 
 A robust pattern handles both the no-match and the ambiguous cases rather than
@@ -290,11 +299,18 @@ From `POST /v1/tasks/match`.
 | Field | Type | Notes |
 |---|---|---|
 | `query` | `str \| None` | The echoed query |
+| `type` | `str \| None` | `"task"`, `"capability"`, `"unsupported"`, or `"none"` |
 | `matched` | `bool` | A high-confidence task was found |
 | `chosen` | `TaskMatchCandidate \| None` | The best candidate, or `None` if nothing cleared the bar |
+| `capability` | `Capability \| None` | The general lane, when `type == "capability"` |
 | `candidates` | `list[TaskMatchCandidate]` | The top-`top_k` ranked alternates |
+| `reasoning` | `str \| None` | Why the router picked this match (reasoning matcher only) |
+| `confidence` | `str \| None` | `"high"` / `"medium"` / `"low"` (reasoning matcher only) |
 | `ambiguous` | `bool` | `True` when the top two scores are close |
-| `matcher` | `str \| None` | Which matcher fired: `"keyword"` or `"semantic"` |
+| `matcher` | `str \| None` | Which matcher answered: `"reason"` (LLM router) or `"keyword"` (fallback) |
+
+See [`Capability`](types.md#capability) for the capability lane fields (`id`,
+`label`, `category`, `category_id`, `desc`).
 
 ### TaskMatchCandidate
 

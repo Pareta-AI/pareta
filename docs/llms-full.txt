@@ -761,8 +761,15 @@ if (m.matched && m.chosen) {
 console.log("ambiguous?", m.ambiguous, "via", m.matcher);
 ```
 
-`match()` raises `ValueError` on an empty query. The matcher is a deterministic
-keyword scorer today; `m.matcher` tells you which strategy answered.
+`match()` raises `ValueError` on an empty query. The matcher is an LLM reasoning
+router that maps your intent to one of three outcomes — a benchmarked task, a
+general **capability** lane (chat, coding, agentic, vision, speech-to-text,
+text-to-speech) when no specific task fits, or `unsupported` when the work is
+outside what Pareta does. `m.matcher` tells you which strategy answered
+(`"reason"`, or `"keyword"` on the lexical fallback). The richer typed fields
+(`m.type`, `m.reasoning`, `m.confidence`, `m.capability`) are populated by the
+reasoning router. See [Finding the right model](discovery.md#capabilities) for the
+capability lanes.
 
 ## Open vs frontier models
 
@@ -1013,10 +1020,15 @@ iterator form.
 Both inference and evals are **metered against your organization's balance**.
 
 - **Inference:** a successful `chat.completions.create()` debits the org
-  balance.
+  balance. A numbered-task endpoint is billed a **flat per-request** rate;
+  a **capability** endpoint (open-ended request shapes) is billed **per token**
+  instead, off the model's serving rate.
+- **Speech:** the `pa.audio` namespace (`pa.audio.transcriptions(...)`,
+  `pa.audio.speech(...)`) is billed **per minute** of audio — see
+  [Finding the right model](discovery.md#capabilities).
 - **Evals:** `evals.runs.create()` debits for the compute it spends: both the
   open candidates and any frontier baselines you include.
-- **Empty balance:** either path raises `InsufficientCreditsError` (HTTP 402).
+- **Empty balance:** every path raises `InsufficientCreditsError` (HTTP 402).
 
 **Python**
 
@@ -1856,10 +1868,65 @@ console.log(ep.isLive, ep.url);
 | `task` | `str \| None` | Task name |
 | `url` | `str \| None` | OpenAI-compatible inference URL |
 | `is_live` | `bool` | `status == "live"` |
+| `recommended_system_prompt` | `str \| None` | Extraction tasks: the benchmark's system prompt (auto-applied; see below) |
+| `prompt_scaffold` | `str \| None` | Classification tasks: a copy-and-customize prompt template (never auto-applied) |
+
+(TypeScript: `recommendedSystemPrompt` / `promptScaffold`, `isLive`, etc.)
 
 `endpoints.list()` returns every endpoint the org can access. For the
 OpenAI-compatible subset (only deployed, url-bearing endpoints, shaped as
 `Model` objects), use [`pa.models.list()`](inference.md) instead.
+
+### The endpoint's recommended prompt
+
+Pareta's benchmark numbers for the structured tasks (contract / SEC / ICD
+extraction) were measured with a specific system prompt — the extraction
+instructions plus the output-schema guidance. A deployed endpoint reproduces it
+**for free**: when you send a request with **no `system` message**, the proxy
+injects the recommended prompt automatically, so the model matches its
+leaderboard quality without you knowing the magic wording. Send your own
+`system` message and Pareta keeps yours (and logs that you overrode the default).
+
+`recommended_system_prompt` returns that exact text so you can read it, tweak it,
+or log it:
+
+**Python**
+
+```python
+ep = pa.endpoints.retrieve("ep_a1b2c3")
+if ep.recommended_system_prompt:
+    # Read it, or customize and send your own — sending any system message
+    # opts out of the auto-injected default.
+    pa.chat.completions.create(
+        model=ep.id,
+        messages=[
+            {"role": "system", "content": ep.recommended_system_prompt + "\n\nReturn at most 10 codes."},
+            {"role": "user", "content": discharge_summary},
+        ],
+    )
+```
+
+**TypeScript**
+
+```typescript
+const ep = await pa.endpoints.retrieve("ep_a1b2c3");
+if (ep.recommendedSystemPrompt) {
+  await pa.chat.completions.create({
+    model: ep.id!,
+    messages: [
+      { role: "system", content: ep.recommendedSystemPrompt + "\n\nReturn at most 10 codes." },
+      { role: "user", content: dischargeSummary },
+    ],
+  });
+}
+```
+
+**Classification endpoints** are different: their label set is *yours*, not the
+benchmark's, so there's nothing safe to auto-inject. Instead they expose
+`prompt_scaffold` — a ready-to-edit `system` prompt with placeholder categories.
+Fill in your own labels and send it yourself; it is never applied automatically.
+`recommended_system_prompt` is `None` for these, and `prompt_scaffold` is `None`
+for everything else.
 
 ## Start, stop, and delete
 
@@ -2144,9 +2211,13 @@ const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE
 
 ## 1. Match intent to a task
 
-`tasks.match(query, top_k=5)` turns a plain-English description into ranked
-candidate tasks. The matcher is a deterministic keyword scorer (with a semantic
-backstop on the backend), so the same query returns the same ranking.
+`tasks.match(query, top_k=5)` turns a plain-English description into a match. The
+matcher is an LLM reasoning router: it reasons about your **intent** (not keyword
+overlap) and maps it to exactly one of three outcomes — a benchmarked **task**, a
+general **capability** lane when no specific task fits, or `unsupported` when the
+work is outside what Pareta does (see [Capabilities](#capabilities) below). If the
+router is unavailable it degrades to a deterministic keyword scorer rather than
+failing.
 
 **Python**
 
@@ -2190,7 +2261,17 @@ if (match.matched) {
   `"high"`/`"medium"`/`"low"`).
 - `ambiguous: bool` - `True` when the top two scores are close. A good prompt to
   ask the user to disambiguate.
-- `matcher: str | None` - which matcher fired (`"keyword"` or `"semantic"`).
+- `matcher: str | None` - which matcher answered: `"reason"` (the LLM router) or
+  `"keyword"` (the lexical fallback).
+
+The reasoning router also fills three typed fields on `TaskMatch`:
+
+- `match.type: str` - `"task"`, `"capability"`, `"unsupported"`, or `"none"`.
+- `match.reasoning: str` - one to three sentences on why it routed there.
+- `match.confidence: str` - `"high"` / `"medium"` / `"low"`.
+- `match.capability: Capability | None` - the capability lane (`id`, `label`,
+  `category`, `category_id`, `desc`) when `type == "capability"`. See
+  [Capabilities](#capabilities).
 
 A robust pattern handles the no-match and ambiguous cases instead of blindly
 trusting `chosen`:
@@ -2257,6 +2338,55 @@ console.log(task.id, task.defaultScorer, "blob_input=", task.hasBlobInput);
 
 To browse the whole catalog instead of matching, use `pa.tasks.list()`, which
 returns `list[Task]`.
+
+### Capabilities
+
+Not every job is a numbered benchmark task. When the work is something Pareta
+broadly supports but no specific task fits, `match` routes to a **capability**
+lane (`type == "capability"`). The lanes are:
+
+| Capability | What it covers | Open model |
+|---|---|---|
+| `chat` | Open-ended text — Q&A, summarize, rewrite, translate | `gpt-oss-120b` |
+| `coding` | Write, refactor, or debug code from a description | `qwen3-coder-next-fp8` |
+| `agentic` | A model that reasons and plans multi-step tool use over your own tools/data | `qwen3-coder-next-fp8` |
+| `vision` | Open-ended understanding of an image — describe, read text, interpret a chart | `qwen3-vl-32b-instruct-fp8` |
+| `asr` | Speech-to-text: transcribe audio across 50+ languages | `qwen3-asr-1.7b` |
+| `tts` | Text-to-speech: synthesize natural speech from text | `kokoro-82m` |
+
+Each capability is **benchmarkable like any other task** — it has a
+bring-your-own-data task (`general-chat`, `general-agentic`, `general-vision`,
+`general-asr`, `general-tts`) carrying the open model and the frontier baselines
+on its leaderboard, but **no pre-baked quality/cost numbers**: both axes come
+from a live run on your own data. So you discover and evaluate a capability with
+the same `match` → `leaderboard` → `evals` loop as a numbered task. The capability
+lane is a confident route, not a weak fallback. (Coding is the exception: its
+intent maps to `capability:coding`, but the benchmarked coding tasks —
+`function-completion`, `code-generation` — carry real pre-baked numbers, so
+they behave like any other numbered task.)
+
+Two capabilities reach inference differently from a deployed chat endpoint:
+
+- **Speech (`asr`, `tts`)** runs over the dedicated `pa.audio` namespace —
+  `pa.audio.transcriptions(...)` and `pa.audio.speech(...)` — not
+  `chat.completions` (see [HTTP API](../reference/http-api.md#speech-audio) for
+  the underlying routes). They are billed **per
+  minute** of audio. `general-asr` is scored on **WER** against your reference
+  transcripts; `general-tts` has **no automatic quality metric** (synthesized
+  audio can't be auto-graded), so its run records **cost and latency only**.
+- **Capability chat endpoints** (chat/coding/agentic/vision) are billed **per
+  token** rather than the flat per-request rate of a numbered task, because their
+  request shapes are open-ended.
+
+### Unsupported intents
+
+When the intent is something Pareta does **not** do at all — generating
+video/images/music, taking a real-world action (send an email, place an order,
+control a device), or fetching live data — `match` returns `type ==
+"unsupported"` (`matched == False`, `chosen == None`). This is the correct
+answer, not a failure: surface it to the user and, in the dashboard, the "Don't
+see your task?" card captures the request for the operator team
+(`POST /v1/task-requests`, session-authenticated — there is no SDK method for it).
 
 ---
 
@@ -2565,8 +2695,9 @@ SDK never exposes balance or payment.
 ## Reference
 
 ### `tasks.match(query, *, top_k=5) -> TaskMatch`
-Free-text intent to ranked candidate tasks. Raises `ValueError` on an empty
-query. Deterministic keyword matcher (semantic backstop on the backend).
+Free-text intent to one match. Raises `ValueError` on an empty query. LLM
+reasoning router (keyword fallback) that returns a benchmarked task, a capability
+lane, or `unsupported` — see [Capabilities](#capabilities).
 
 ### `tasks.retrieve(task_id, *, examples_n=None) -> Task`
 A task's schema: `id`, `default_scorer`, `has_blob_input`. `examples_n` requests
@@ -2586,10 +2717,16 @@ and the roster is capability-filtered (vision-only for document tasks). Feed `id
 into `evals.runs.create(frontier=[...])`.
 
 #### `TaskMatch`
-`query`, `matched: bool`, `chosen: TaskMatchCandidate | None`,
-`candidates: list[TaskMatchCandidate]`, `ambiguous: bool`, `matcher: str | None`.
-Each `TaskMatchCandidate` has `task_id`, `score` (`[0, 1]`), `confidence`
-(`"high"`/`"medium"`/`"low"`).
+`query`, `type` (`"task"`/`"capability"`/`"unsupported"`/`"none"`),
+`matched: bool`, `chosen: TaskMatchCandidate | None`,
+`candidates: list[TaskMatchCandidate]`, `capability: Capability | None`,
+`reasoning: str | None`, `confidence: str | None`, `ambiguous: bool`,
+`matcher: str | None` (`"reason"`/`"keyword"`). Each `TaskMatchCandidate` has
+`task_id`, `score` (`[0, 1]`), `confidence` (`"high"`/`"medium"`/`"low"`).
+
+#### `Capability`
+`id`, `label`, `category`, `category_id`, `desc` — the general lane a match
+resolved to (on `TaskMatch.capability` when `type == "capability"`).
 
 #### `Leaderboard`
 `task_id`, `metric`, `cost_unit`, `recommended: str | None`,
@@ -5824,7 +5961,7 @@ if (m.ambiguous) {
 
 `TaskMatch` fields: `.query`, `.matched` (bool), `.chosen`
 (`TaskMatchCandidate | None`), `.candidates` (ranked list), `.ambiguous`,
-`.matcher` (`"keyword"` or `"semantic"`). Each `TaskMatchCandidate` has
+`.matcher` (`"reason"` or `"keyword"`). Each `TaskMatchCandidate` has
 `.task_id`, `.score` (0 to 1), and `.confidence` (`"high"` / `"medium"` /
 `"low"`). `match` raises `ValueError` if the query is empty.
 
@@ -8766,7 +8903,7 @@ Every dollar you spend on Pareta runs through one org balance, and every model y
 Two things to keep straight up front, because they shape every number below:
 
 - **Money is metered against your org balance.** Inference (`chat.completions.create`) and evals (`evals.runs.create`) both debit the balance on success. An empty balance raises `InsufficientCreditsError` (402). The SDK never exposes balance or payment methods — top-up is browser-only, in the dashboard.
-- **GPUs are hidden and models are aliases.** You never priced a GPU-hour or picked a quantization; Pareta did. So cost shows up as a flat per-request rate or a run total, and the open models in every cost report are per-task public aliases, not raw model names. Frontier (vendor) ids are in the clear.
+- **GPUs are hidden and models are aliases.** You never priced a GPU-hour or picked a quantization; Pareta did. So cost shows up as a flat per-request rate for a numbered task (capability endpoints bill per token; speech bills per minute) or a run total, and the open models in every cost report are per-task public aliases, not raw model names. Frontier (vendor) ids are in the clear.
 
 **Python**
 
@@ -10723,27 +10860,36 @@ def match(self, query: str, *, top_k: int = 5) -> TaskMatch
 
 **Route:** `POST /v1/tasks/match`
 
-Turns a free-text description of your intent into ranked candidate tasks. The
-matcher is a deterministic keyword scorer (with a semantic backstop on the
-backend), so the same query returns the same ranking.
+Turns a free-text description of your intent into a single match. The matcher is
+an LLM reasoning router: it reasons about intent (not keyword overlap) and maps
+the query to exactly one of three outcomes — a benchmarked task, a general
+**capability** lane (chat, coding, agentic, vision, speech-to-text,
+text-to-speech), or `"unsupported"`. If the router is unavailable it falls back
+to a deterministic keyword scorer.
 
 - `query` (required): free-text intent. Raises `ValueError` if empty or
   whitespace-only.
-- `top_k` (default `5`): how many ranked candidates to return.
+- `top_k` (default `5`): how many ranked candidates the keyword fallback returns.
+  The reasoning router returns a single chosen match (it does not rank).
 
-Returns a [`TaskMatch`](#taskmatch).
+Returns a [`TaskMatch`](#taskmatch). Branch on `match.type` to route every
+outcome; the reasoning router also fills `match.reasoning`, `match.confidence`,
+and `match.capability` (a typed [`Capability`](types.md#capability)).
 
 ```python
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
 
-if match.matched:
+if match.type == "task":
     task_id = match.chosen.task_id          # the best task
     print(f"matched {task_id} via {match.matcher} "
-          f"(confidence={match.chosen.confidence})")
-else:
-    # No high-confidence hit: show the ranked alternates instead of guessing.
-    for cand in match.candidates:
-        print(f"  {cand.task_id}  score={cand.score:.2f}  {cand.confidence}")
+          f"(confidence={match.confidence})")
+elif match.type == "capability":
+    cap = match.capability                  # typed Capability
+    print(f"general lane: {cap.label} ({cap.id})")
+else:                                       # "unsupported" / "none"
+    print(f"{match.type}: {match.reasoning}")
+    for cand in match.candidates:           # keyword fallback may rank some
+        print(f"  {cand.task_id}  score={cand.score}  {cand.confidence}")
 ```
 
 A robust pattern handles both the no-match and the ambiguous cases rather than
@@ -10971,11 +11117,18 @@ From `POST /v1/tasks/match`.
 | Field | Type | Notes |
 |---|---|---|
 | `query` | `str \| None` | The echoed query |
+| `type` | `str \| None` | `"task"`, `"capability"`, `"unsupported"`, or `"none"` |
 | `matched` | `bool` | A high-confidence task was found |
 | `chosen` | `TaskMatchCandidate \| None` | The best candidate, or `None` if nothing cleared the bar |
+| `capability` | `Capability \| None` | The general lane, when `type == "capability"` |
 | `candidates` | `list[TaskMatchCandidate]` | The top-`top_k` ranked alternates |
+| `reasoning` | `str \| None` | Why the router picked this match (reasoning matcher only) |
+| `confidence` | `str \| None` | `"high"` / `"medium"` / `"low"` (reasoning matcher only) |
 | `ambiguous` | `bool` | `True` when the top two scores are close |
-| `matcher` | `str \| None` | Which matcher fired: `"keyword"` or `"semantic"` |
+| `matcher` | `str \| None` | Which matcher answered: `"reason"` (LLM router) or `"keyword"` (fallback) |
+
+See [`Capability`](types.md#capability) for the capability lane fields (`id`,
+`label`, `category`, `category_id`, `desc`).
 
 ### TaskMatchCandidate
 
@@ -12028,21 +12181,41 @@ free-text intent to a task.
 | Property | Type | Notes |
 |---|---|---|
 | `query` | `str \| None` | The query, echoed back |
+| `type` | `str \| None` | `"task"`, `"capability"`, `"unsupported"`, or `"none"` |
 | `matched` | `bool` | `True` when a high-confidence match was found |
 | `chosen` | `TaskMatchCandidate \| None` | The best candidate, or `None` if nothing matched confidently |
+| `capability` | `Capability \| None` | The general lane, when `type == "capability"` |
 | `candidates` | `list[TaskMatchCandidate]` | Top-K ranked alternates |
+| `reasoning` | `str \| None` | The router's rationale (reasoning matcher only) |
+| `confidence` | `str \| None` | `"high"` / `"medium"` / `"low"` (reasoning matcher only) |
 | `ambiguous` | `bool` | `True` when the top two scores are close |
-| `matcher` | `str \| None` | Which strategy answered: `"keyword"` or `"semantic"` |
+| `matcher` | `str \| None` | Which strategy answered: `"reason"` (LLM router) or `"keyword"` (fallback) |
 
 ```python
 m = pa.tasks.match("pull totals and dates out of vendor invoices", top_k=5)
-if m.matched and m.chosen:
+if m.type == "task" and m.chosen:
     print("best:", m.chosen.task_id, m.chosen.score, m.chosen.confidence)
+elif m.type == "capability" and m.capability:
+    print("capability:", m.capability.id, m.capability.label)
 else:
-    for c in m.candidates:                  # fall back to ranked alternates
-        print(c.task_id, c.score, c.confidence)
-print("ambiguous?", m.ambiguous, "via", m.matcher)
+    print(m.type, "—", m.reasoning)         # "unsupported" / "none"
+print("via", m.matcher)
 ```
+
+See [Capabilities](../guide/discovery.md#capabilities) for the general lanes.
+
+### Capability
+
+The general capability lane a match resolved to — on `TaskMatch.capability` when
+`TaskMatch.type == "capability"`.
+
+| Property | Type | Notes |
+|---|---|---|
+| `id` | `str \| None` | The lane id (`chat`/`coding`/`agentic`/`vision`/`asr`/`tts`) |
+| `label` | `str \| None` | Human-readable label |
+| `category` | `str \| None` | Catalog category name |
+| `category_id` | `str \| None` | Catalog category id |
+| `desc` | `str \| None` | One-line description |
 
 ### TaskMatchCandidate
 
@@ -12121,6 +12294,43 @@ for fm in pa.evals.frontier_models(task="contract-key-fields"):
     flag = "vision" if fm.vision else "text"
     note = " (on leaderboard)" if fm.benchmarked else ""
     print(fm.id, fm.vendor, flag, note)
+```
+
+## Audio types
+
+The Speech lanes (`asr`, `tts`) return these from the `audio` namespace.
+
+### Transcription
+
+Returned from `audio.transcriptions(audio, language=...)`. Speech-to-text.
+
+| Property | Type | Notes |
+|---|---|---|
+| `text` | `str \| None` | The transcript (also `str(transcription)`) |
+| `language` | `str \| None` | Detected (or supplied) language |
+| `duration_s` | `float \| None` | Input audio length, metered per minute |
+
+```python
+t = pa.audio.transcriptions("call.wav")   # path | bytes | base64
+print(t.text, t.language, t.duration_s)
+```
+
+### Speech
+
+Returned from `audio.speech(text, voice=...)`. Text-to-speech.
+
+| Property | Type | Notes |
+|---|---|---|
+| `audio` | `bytes` | The synthesized audio, base64-decoded |
+| `audio_base64` | `str \| None` | The raw base64 the server returned |
+| `sample_rate` | `int \| None` | Sample rate of the audio |
+| `duration_s` | `float \| None` | Output audio length, metered per minute |
+| `format` | `str \| None` | Container/codec (e.g. `"wav"`) |
+
+`save(path)` writes the decoded bytes to a file and returns `self`.
+
+```python
+pa.audio.speech("Hello from Pareta.").save("out.wav")
 ```
 
 ## Evaluation types
@@ -12292,8 +12502,11 @@ A few platform truths shape every route below:
   Frontier (vendor) ids are in the clear.
 - **Inference and evals are metered against your org balance.**
   `POST /v1/chat/completions` debits on success; `POST /v1/eval-runs` debits for
-  the open and frontier compute it runs. An empty balance returns `402`. Top-up
-  is browser-only; there is no balance or payment route.
+  the open and frontier compute it runs. Numbered-task endpoints bill a flat
+  **per-request** rate; **capability** endpoints (chat/coding/agentic/vision)
+  bill **per token**; the speech routes (`/v1/audio/*`) bill **per minute** of
+  audio. An empty balance returns `402`. Top-up is browser-only; there is no
+  balance or payment route.
 - **Inference is OpenAI-compatible.** `/v1/chat/completions` and `/v1/models`
   speak the OpenAI wire format, so existing OpenAI clients point at Pareta by
   swapping the base URL and key.
@@ -12366,6 +12579,8 @@ out. A key that reaches the server and is rejected returns `401`
 | `tasks.retrieve(id)` | `GET` | `/v1/tasks/{id}` |
 | `tasks.match(query)` | `POST` | `/v1/tasks/match` |
 | `tasks.leaderboard(id)` / `tasks.recommended(id)` | `GET` | `/v1/tasks/{id}/leaderboard` |
+| `audio.transcriptions(audio)` | `POST` | `/v1/audio/transcriptions` |
+| `audio.speech(text)` | `POST` | `/v1/audio/speech` |
 | `evals.frontier_models(task)` | `GET` | `/v1/eval/frontier-models` |
 | `evals.sets.create(...)` | `POST` | `/v1/eval-sets` |
 | `evals.sets.list()` | `GET` | `/v1/eval-sets` |
@@ -12382,7 +12597,10 @@ out. A key that reaches the server and is rejected returns `401`
 OpenAI-compatible chat completions. Wrapped by
 [`chat.completions.create()`](../guide/inference.md). Metered: a successful
 completion debits the org balance, and an empty balance returns `402`
-(`InsufficientCreditsError`).
+(`InsufficientCreditsError`). A numbered-task endpoint is billed its flat
+per-request rate; a **capability** endpoint (chat/coding/agentic/vision) is
+billed **per token** (`total_tokens × rate`) instead, since its request shape is
+open-ended.
 
 `model` is an endpoint id from a deploy (or any model id your org can reach).
 Extra OpenAI fields (`temperature`, `max_tokens`, `top_p`, ...) pass straight
@@ -12631,9 +12849,13 @@ with Pareta.from_env() as pa:
 
 ### `POST /v1/tasks/match`
 
-Map free-text intent to ranked candidate tasks. Wrapped by
-`tasks.match(query, top_k=5)`. The matcher is a deterministic keyword scorer with
-an optional semantic backstop. An empty `query` raises `ValueError` client-side.
+Map free-text intent to one match. Wrapped by `tasks.match(query, top_k=5)`. The
+matcher is an LLM reasoning router that maps intent to a benchmarked task, a
+general capability lane (`"capability:<id>"`), or `"unsupported"`, degrading to a
+keyword scorer if the router is unavailable. An empty `query` raises `ValueError`
+client-side. The response keeps the legacy keys (`matched`/`chosen`/`candidates`/
+`ambiguous`/`matcher`) and adds `type` (`"task"`/`"capability"`/`"unsupported"`/
+`"none"`), `reasoning`, and `capability` (when `type == "capability"`).
 
 Request body:
 
@@ -12680,6 +12902,52 @@ with Pareta.from_env() as pa:
 
 > `tasks.leaderboard()` and `tasks.recommended()` exist on the sync client only;
 > the async `AsyncTasks` has `list`, `retrieve`, and `match`.
+
+## Speech (audio)
+
+The Speech capability lanes (`asr`, `tts`) run on dedicated services, not the
+chat-completions path, so they have their own routes. The SDK wraps them in the
+`pa.audio` namespace (`pa.audio.transcriptions(...)` / `pa.audio.speech(...)`);
+the routes below are what those methods call. Both are metered **per minute** of
+audio and return `402` (`InsufficientCreditsError`) on an empty balance.
+
+### `POST /v1/audio/transcriptions`
+
+Speech-to-text (the `asr` lane). Body is JSON with base64 audio:
+
+```json
+{"audio_base64": "<base64 wav/mp3/m4a/webm>", "language": "en"}
+```
+
+`language` is optional. Returns `{"text": ..., "language": ..., "duration_s": ...}`;
+debits per minute of **input** audio.
+
+```bash
+curl https://api.pareta.ai/v1/audio/transcriptions \
+  -H "Authorization: Bearer $PARETA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"audio_base64\": \"$(base64 -i call.wav)\"}"
+```
+
+### `POST /v1/audio/speech`
+
+Text-to-speech (the `tts` lane). Body is JSON:
+
+```json
+{"text": "Hello from Pareta.", "voice": "<optional kokoro voice id>"}
+```
+
+`text` is required (max 5000 chars); `voice` is optional (omit for the default
+Kokoro voice). Returns
+`{"audio_base64": ..., "sample_rate": ..., "duration_s": ..., "format": ...}`;
+debits per minute of **output** audio.
+
+```bash
+curl https://api.pareta.ai/v1/audio/speech \
+  -H "Authorization: Bearer $PARETA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from Pareta."}'
+```
 
 ## Evals
 

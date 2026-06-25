@@ -5,7 +5,7 @@ Every dollar you spend on Pareta runs through one org balance, and every model y
 Two things to keep straight up front, because they shape every number below:
 
 - **Money is metered against your org balance.** Inference (`chat.completions.create`) and evals (`evals.runs.create`) both debit the balance on success. An empty balance raises `InsufficientCreditsError` (402). The SDK never exposes balance or payment methods — top-up is browser-only, in the dashboard.
-- **GPUs are hidden and models are aliases.** You never priced a GPU-hour or picked a quantization; Pareta did. So cost shows up as a flat per-request rate or a run total, and the open models in every cost report are per-task public aliases, not raw model names. Frontier (vendor) ids are in the clear.
+- **GPUs are hidden and models are aliases.** You never priced a GPU-hour or picked a quantization; Pareta did. So cost shows up as a flat per-request rate for a numbered task (capability endpoints bill per token; speech bills per minute) or a run total, and the open models in every cost report are per-task public aliases, not raw model names. Frontier (vendor) ids are in the clear.
 
 **Python**
 

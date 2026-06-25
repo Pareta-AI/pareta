@@ -42,6 +42,72 @@ def test_tasks_match():
     assert m.matcher == "keyword"
 
 
+def test_tasks_match_reasoning_task_type():
+    # Reasoning matcher shape: type/reasoning/confidence + a chosen task.
+    def handler(request):
+        return json_response(200, {
+            "query": "extract line items from invoices", "type": "task",
+            "matched": True, "matcher": "reason", "ambiguous": False,
+            "reasoning": "grounded extraction over a document",
+            "confidence": "high",
+            "chosen": {"task_id": "invoice-extraction", "rank": 0, "score": None,
+                       "confidence": "high", "category": "Document Extraction"},
+            "capability": None,
+            "candidates": [{"task_id": "invoice-extraction", "confidence": "high"}],
+        })
+
+    pa = sync_client(handler)
+    m = pa.tasks.match("extract line items from invoices")
+    assert m.type == "task"
+    assert m.matcher == "reason"
+    assert m.reasoning == "grounded extraction over a document"
+    assert m.confidence == "high"
+    assert m.chosen.task_id == "invoice-extraction"
+    assert m.capability is None
+
+
+def test_tasks_match_capability_type():
+    def handler(request):
+        return json_response(200, {
+            "query": "summarize this email thread", "type": "capability",
+            "matched": True, "matcher": "reason", "ambiguous": False,
+            "reasoning": "open-ended text generation", "confidence": "high",
+            "chosen": None,
+            "capability": {"id": "chat", "label": "Chat", "category": "Chat",
+                           "category_id": "chat", "desc": "General text chat."},
+            "candidates": [],
+        })
+
+    pa = sync_client(handler)
+    m = pa.tasks.match("summarize this email thread")
+    assert m.type == "capability"
+    cap = m.capability
+    assert cap is not None
+    assert cap.id == "chat"
+    assert cap.label == "Chat"
+    assert cap.category == "Chat"
+    assert cap.category_id == "chat"
+    assert cap.desc == "General text chat."
+    assert m.chosen is None
+
+
+def test_tasks_match_unsupported_type():
+    def handler(request):
+        return json_response(200, {
+            "query": "generate a video of a cat", "type": "unsupported",
+            "matched": False, "matcher": "reason", "ambiguous": False,
+            "reasoning": "Pareta does not generate video.", "confidence": "high",
+            "chosen": None, "capability": None, "candidates": [],
+        })
+
+    pa = sync_client(handler)
+    m = pa.tasks.match("generate a video of a cat")
+    assert m.type == "unsupported"
+    assert m.matched is False
+    assert m.reasoning == "Pareta does not generate video."
+    assert m.capability is None and m.chosen is None
+
+
 # ── eval sets ────────────────────────────────────────────────────────────
 def test_eval_set_create_sends_multipart_jsonl():
     seen = {}

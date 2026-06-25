@@ -96,8 +96,15 @@ if (m.matched && m.chosen) {
 console.log("ambiguous?", m.ambiguous, "via", m.matcher);
 ```
 
-`match()` raises `ValueError` on an empty query. The matcher is a deterministic
-keyword scorer today; `m.matcher` tells you which strategy answered.
+`match()` raises `ValueError` on an empty query. The matcher is an LLM reasoning
+router that maps your intent to one of three outcomes — a benchmarked task, a
+general **capability** lane (chat, coding, agentic, vision, speech-to-text,
+text-to-speech) when no specific task fits, or `unsupported` when the work is
+outside what Pareta does. `m.matcher` tells you which strategy answered
+(`"reason"`, or `"keyword"` on the lexical fallback). The richer typed fields
+(`m.type`, `m.reasoning`, `m.confidence`, `m.capability`) are populated by the
+reasoning router. See [Finding the right model](discovery.md#capabilities) for the
+capability lanes.
 
 ## Open vs frontier models
 
@@ -348,10 +355,15 @@ iterator form.
 Both inference and evals are **metered against your organization's balance**.
 
 - **Inference:** a successful `chat.completions.create()` debits the org
-  balance.
+  balance. A numbered-task endpoint is billed a **flat per-request** rate;
+  a **capability** endpoint (open-ended request shapes) is billed **per token**
+  instead, off the model's serving rate.
+- **Speech:** the `pa.audio` namespace (`pa.audio.transcriptions(...)`,
+  `pa.audio.speech(...)`) is billed **per minute** of audio — see
+  [Finding the right model](discovery.md#capabilities).
 - **Evals:** `evals.runs.create()` debits for the compute it spends: both the
   open candidates and any frontier baselines you include.
-- **Empty balance:** either path raises `InsufficientCreditsError` (HTTP 402).
+- **Empty balance:** every path raises `InsufficientCreditsError` (HTTP 402).
 
 **Python**
 

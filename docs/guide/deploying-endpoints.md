@@ -224,10 +224,65 @@ console.log(ep.isLive, ep.url);
 | `task` | `str \| None` | Task name |
 | `url` | `str \| None` | OpenAI-compatible inference URL |
 | `is_live` | `bool` | `status == "live"` |
+| `recommended_system_prompt` | `str \| None` | Extraction tasks: the benchmark's system prompt (auto-applied; see below) |
+| `prompt_scaffold` | `str \| None` | Classification tasks: a copy-and-customize prompt template (never auto-applied) |
+
+(TypeScript: `recommendedSystemPrompt` / `promptScaffold`, `isLive`, etc.)
 
 `endpoints.list()` returns every endpoint the org can access. For the
 OpenAI-compatible subset (only deployed, url-bearing endpoints, shaped as
 `Model` objects), use [`pa.models.list()`](inference.md) instead.
+
+### The endpoint's recommended prompt
+
+Pareta's benchmark numbers for the structured tasks (contract / SEC / ICD
+extraction) were measured with a specific system prompt — the extraction
+instructions plus the output-schema guidance. A deployed endpoint reproduces it
+**for free**: when you send a request with **no `system` message**, the proxy
+injects the recommended prompt automatically, so the model matches its
+leaderboard quality without you knowing the magic wording. Send your own
+`system` message and Pareta keeps yours (and logs that you overrode the default).
+
+`recommended_system_prompt` returns that exact text so you can read it, tweak it,
+or log it:
+
+**Python**
+
+```python
+ep = pa.endpoints.retrieve("ep_a1b2c3")
+if ep.recommended_system_prompt:
+    # Read it, or customize and send your own — sending any system message
+    # opts out of the auto-injected default.
+    pa.chat.completions.create(
+        model=ep.id,
+        messages=[
+            {"role": "system", "content": ep.recommended_system_prompt + "\n\nReturn at most 10 codes."},
+            {"role": "user", "content": discharge_summary},
+        ],
+    )
+```
+
+**TypeScript**
+
+```typescript
+const ep = await pa.endpoints.retrieve("ep_a1b2c3");
+if (ep.recommendedSystemPrompt) {
+  await pa.chat.completions.create({
+    model: ep.id!,
+    messages: [
+      { role: "system", content: ep.recommendedSystemPrompt + "\n\nReturn at most 10 codes." },
+      { role: "user", content: dischargeSummary },
+    ],
+  });
+}
+```
+
+**Classification endpoints** are different: their label set is *yours*, not the
+benchmark's, so there's nothing safe to auto-inject. Instead they expose
+`prompt_scaffold` — a ready-to-edit `system` prompt with placeholder categories.
+Fill in your own labels and send it yourself; it is never applied automatically.
+`recommended_system_prompt` is `None` for these, and `prompt_scaffold` is `None`
+for everything else.
 
 ## Start, stop, and delete
 

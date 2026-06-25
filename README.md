@@ -60,7 +60,52 @@ client = OpenAI(api_key="pareta_sk_…", base_url="https://api.pareta.ai/v1")
 ```
 
 This SDK's unique value is the **control plane**: deploy, operate, and eval
-models from code. Those land slice by slice — see `SDK_PLAN.md`.
+models from code — available both as Python methods and via the two interfaces
+below.
+
+## CLI
+
+`pip install "pareta[cli]"` adds the `pareta` command — the same control plane
+from your shell:
+
+```bash
+export PARETA_API_KEY=pareta_sk_…
+
+pareta tasks match "extract fields from invoices"     # intent → task
+pareta tasks leaderboard invoice-extraction           # ranked open models + savings
+pareta endpoints deploy --task invoice-extraction --wait
+pareta endpoints list
+pareta chat ep_… "Summarize this contract: …"          # prompt arg or piped stdin
+pareta endpoints cost ep_…
+```
+
+Add `--json` to any command for machine-readable output; `pareta --help` (or
+`pareta <group> --help`) documents the full tree — `tasks`, `models`,
+`endpoints`, `evals`, `chat`, `audio`.
+
+## MCP server
+
+`pip install "pareta[mcp]"` adds `pareta-mcp`, a
+[Model Context Protocol](https://modelcontextprotocol.io) server that exposes
+Pareta to an AI agent (Claude Desktop, Cursor, …) as tools — so the agent can
+*find the best open model for a task, benchmark it on your data, and deploy it*.
+Register it (Claude Desktop → Settings → Developer → Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "pareta": {
+      "command": "pareta-mcp",
+      "env": { "PARETA_API_KEY": "pareta_sk_…" }
+    }
+  }
+}
+```
+
+It exposes the full surface — discovery (`match_task`, `get_leaderboard`, …),
+provisioning (`deploy_endpoint`, `start` / `stop` / `delete`), eval (`run_eval`),
+and metered `chat` / `transcribe` / `speak`. Provisioning and inference tools
+spend money; your MCP client's per-tool-call approval is the guardrail.
 
 ## Errors
 
@@ -81,6 +126,8 @@ Idempotent GETs and 429/5xx/timeouts are retried with exponential backoff
 
 ## Status
 
-Slice 1 (this release): core client, auth, retries, typed errors,
-`chat.completions`, `models`. Endpoints, tasks, and evals land next
-(`SDK_PLAN.md` §11).
+Live: the full control plane — `chat`, `models`, `tasks` (browse + match),
+`endpoints` (deploy / operate / metrics), `evals` (bring-your-own-data), and
+`audio` — plus two interfaces over it: the **`pareta` CLI** (`pip install
+"pareta[cli]"`) and the **`pareta-mcp` MCP server** (`pip install "pareta[mcp]"`).
+Sync + async clients.

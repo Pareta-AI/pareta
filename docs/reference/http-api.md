@@ -21,8 +21,11 @@ A few platform truths shape every route below:
   Frontier (vendor) ids are in the clear.
 - **Inference and evals are metered against your org balance.**
   `POST /v1/chat/completions` debits on success; `POST /v1/eval-runs` debits for
-  the open and frontier compute it runs. An empty balance returns `402`. Top-up
-  is browser-only; there is no balance or payment route.
+  the open and frontier compute it runs. Numbered-task endpoints bill a flat
+  **per-request** rate; **capability** endpoints (chat/coding/agentic/vision)
+  bill **per token**; the speech routes (`/v1/audio/*`) bill **per minute** of
+  audio. An empty balance returns `402`. Top-up is browser-only; there is no
+  balance or payment route.
 - **Inference is OpenAI-compatible.** `/v1/chat/completions` and `/v1/models`
   speak the OpenAI wire format, so existing OpenAI clients point at Pareta by
   swapping the base URL and key.
@@ -95,6 +98,8 @@ out. A key that reaches the server and is rejected returns `401`
 | `tasks.retrieve(id)` | `GET` | `/v1/tasks/{id}` |
 | `tasks.match(query)` | `POST` | `/v1/tasks/match` |
 | `tasks.leaderboard(id)` / `tasks.recommended(id)` | `GET` | `/v1/tasks/{id}/leaderboard` |
+| `audio.transcriptions(audio)` | `POST` | `/v1/audio/transcriptions` |
+| `audio.speech(text)` | `POST` | `/v1/audio/speech` |
 | `evals.frontier_models(task)` | `GET` | `/v1/eval/frontier-models` |
 | `evals.sets.create(...)` | `POST` | `/v1/eval-sets` |
 | `evals.sets.list()` | `GET` | `/v1/eval-sets` |
@@ -111,7 +116,10 @@ out. A key that reaches the server and is rejected returns `401`
 OpenAI-compatible chat completions. Wrapped by
 [`chat.completions.create()`](../guide/inference.md). Metered: a successful
 completion debits the org balance, and an empty balance returns `402`
-(`InsufficientCreditsError`).
+(`InsufficientCreditsError`). A numbered-task endpoint is billed its flat
+per-request rate; a **capability** endpoint (chat/coding/agentic/vision) is
+billed **per token** (`total_tokens × rate`) instead, since its request shape is
+open-ended.
 
 `model` is an endpoint id from a deploy (or any model id your org can reach).
 Extra OpenAI fields (`temperature`, `max_tokens`, `top_p`, ...) pass straight
@@ -360,9 +368,13 @@ with Pareta.from_env() as pa:
 
 ### `POST /v1/tasks/match`
 
-Map free-text intent to ranked candidate tasks. Wrapped by
-`tasks.match(query, top_k=5)`. The matcher is a deterministic keyword scorer with
-an optional semantic backstop. An empty `query` raises `ValueError` client-side.
+Map free-text intent to one match. Wrapped by `tasks.match(query, top_k=5)`. The
+matcher is an LLM reasoning router that maps intent to a benchmarked task, a
+general capability lane (`"capability:<id>"`), or `"unsupported"`, degrading to a
+keyword scorer if the router is unavailable. An empty `query` raises `ValueError`
+client-side. The response keeps the legacy keys (`matched`/`chosen`/`candidates`/
+`ambiguous`/`matcher`) and adds `type` (`"task"`/`"capability"`/`"unsupported"`/
+`"none"`), `reasoning`, and `capability` (when `type == "capability"`).
 
 Request body:
 
@@ -409,6 +421,52 @@ with Pareta.from_env() as pa:
 
 > `tasks.leaderboard()` and `tasks.recommended()` exist on the sync client only;
 > the async `AsyncTasks` has `list`, `retrieve`, and `match`.
+
+## Speech (audio)
+
+The Speech capability lanes (`asr`, `tts`) run on dedicated services, not the
+chat-completions path, so they have their own routes. The SDK wraps them in the
+`pa.audio` namespace (`pa.audio.transcriptions(...)` / `pa.audio.speech(...)`);
+the routes below are what those methods call. Both are metered **per minute** of
+audio and return `402` (`InsufficientCreditsError`) on an empty balance.
+
+### `POST /v1/audio/transcriptions`
+
+Speech-to-text (the `asr` lane). Body is JSON with base64 audio:
+
+```json
+{"audio_base64": "<base64 wav/mp3/m4a/webm>", "language": "en"}
+```
+
+`language` is optional. Returns `{"text": ..., "language": ..., "duration_s": ...}`;
+debits per minute of **input** audio.
+
+```bash
+curl https://api.pareta.ai/v1/audio/transcriptions \
+  -H "Authorization: Bearer $PARETA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"audio_base64\": \"$(base64 -i call.wav)\"}"
+```
+
+### `POST /v1/audio/speech`
+
+Text-to-speech (the `tts` lane). Body is JSON:
+
+```json
+{"text": "Hello from Pareta.", "voice": "<optional kokoro voice id>"}
+```
+
+`text` is required (max 5000 chars); `voice` is optional (omit for the default
+Kokoro voice). Returns
+`{"audio_base64": ..., "sample_rate": ..., "duration_s": ..., "format": ...}`;
+debits per minute of **output** audio.
+
+```bash
+curl https://api.pareta.ai/v1/audio/speech \
+  -H "Authorization: Bearer $PARETA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello from Pareta."}'
+```
 
 ## Evals
 

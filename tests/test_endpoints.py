@@ -32,6 +32,34 @@ def test_endpoints_retrieve():
     assert ep.model == "qwen-1" and ep.is_live
 
 
+def test_endpoint_surfaces_prompt_fields():
+    # Extraction endpoint exposes the benchmark system prompt (auto-applied by the
+    # proxy); a classifier exposes a copy-and-customize scaffold; a plain endpoint
+    # omits both, and the accessors return None rather than KeyError.
+    rows = {
+        "ep-x": {"id": "ep-x", "status": "live", "taskName": "icd-coding",
+                 "recommendedSystemPrompt": "You are an expert inpatient medical coder.",
+                 "promptScaffold": None},
+        "ep-c": {"id": "ep-c", "status": "live", "taskName": "intent-classification",
+                 "recommendedSystemPrompt": None,
+                 "promptScaffold": "This endpoint classifies text, but the categories are YOURS"},
+        "ep-p": {"id": "ep-p", "status": "live", "taskName": "chat"},
+    }
+
+    def handler(request):
+        return json_response(200, rows[request.url.path.rsplit("/", 1)[-1]])
+
+    pa = sync_client(handler)
+    x = pa.endpoints.retrieve("ep-x")
+    assert x.recommended_system_prompt.startswith("You are an expert")
+    assert x.prompt_scaffold is None
+    c = pa.endpoints.retrieve("ep-c")
+    assert c.prompt_scaffold.startswith("This endpoint classifies")
+    assert c.recommended_system_prompt is None
+    p = pa.endpoints.retrieve("ep-p")
+    assert p.recommended_system_prompt is None and p.prompt_scaffold is None
+
+
 def test_endpoints_lifecycle_calls_right_routes():
     seen = []
 

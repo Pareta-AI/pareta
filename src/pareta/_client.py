@@ -170,12 +170,14 @@ class Pareta(_BaseClient):
         from .resources.endpoints import Endpoints
         from .resources.tasks import Tasks
         from .resources.evals import Evals
+        from .resources.audio import Audio
 
         self.chat = Chat(self)
         self.models = Models(self)
         self.endpoints = Endpoints(self)
         self.tasks = Tasks(self)
         self.evals = Evals(self)
+        self.audio = Audio(self)
 
     # ── lifecycle ─────────────────────────────────────────────────────
     @classmethod
@@ -282,12 +284,14 @@ class AsyncPareta(_BaseClient):
         from .resources.endpoints import AsyncEndpoints
         from .resources.tasks import AsyncTasks
         from .resources.evals import AsyncEvals
+        from .resources.audio import AsyncAudio
 
         self.chat = AsyncChat(self)
         self.models = AsyncModels(self)
         self.endpoints = AsyncEndpoints(self)
         self.tasks = AsyncTasks(self)
         self.evals = AsyncEvals(self)
+        self.audio = AsyncAudio(self)
 
     @classmethod
     def from_env(cls, **kwargs) -> "AsyncPareta":

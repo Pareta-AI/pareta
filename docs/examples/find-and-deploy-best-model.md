@@ -97,7 +97,7 @@ if (m.ambiguous) {
 
 `TaskMatch` fields: `.query`, `.matched` (bool), `.chosen`
 (`TaskMatchCandidate | None`), `.candidates` (ranked list), `.ambiguous`,
-`.matcher` (`"keyword"` or `"semantic"`). Each `TaskMatchCandidate` has
+`.matcher` (`"reason"` or `"keyword"`). Each `TaskMatchCandidate` has
 `.task_id`, `.score` (0 to 1), and `.confidence` (`"high"` / `"medium"` /
 `"low"`). `match` raises `ValueError` if the query is empty.
 

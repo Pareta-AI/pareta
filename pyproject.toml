@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pareta"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python client for Pareta — deploy open-weights endpoints, run metered inference, and eval models on your own data."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,20 @@ dev = [
     "pytest-asyncio>=0.23",
     "respx>=0.21",
 ]
+# `pip install pareta[cli]` → the `pareta` command (Typer over this SDK).
+# `pip install pareta[mcp]` → the `pareta-mcp` Model Context Protocol server
+# (stdio) that exposes the SDK's operations as tools to an AI agent.
+cli = [
+    "typer>=0.12",
+    "rich>=13",
+]
+mcp = [
+    "mcp>=1.2",
+]
+
+[project.scripts]
+pareta = "pareta.cli:app"
+pareta-mcp = "pareta.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pareta"]

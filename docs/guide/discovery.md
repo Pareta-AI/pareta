@@ -48,9 +48,13 @@ const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE
 
 ## 1. Match intent to a task
 
-`tasks.match(query, top_k=5)` turns a plain-English description into ranked
-candidate tasks. The matcher is a deterministic keyword scorer (with a semantic
-backstop on the backend), so the same query returns the same ranking.
+`tasks.match(query, top_k=5)` turns a plain-English description into a match. The
+matcher is an LLM reasoning router: it reasons about your **intent** (not keyword
+overlap) and maps it to exactly one of three outcomes — a benchmarked **task**, a
+general **capability** lane when no specific task fits, or `unsupported` when the
+work is outside what Pareta does (see [Capabilities](#capabilities) below). If the
+router is unavailable it degrades to a deterministic keyword scorer rather than
+failing.
 
 **Python**
 
@@ -94,7 +98,17 @@ if (match.matched) {
   `"high"`/`"medium"`/`"low"`).
 - `ambiguous: bool` - `True` when the top two scores are close. A good prompt to
   ask the user to disambiguate.
-- `matcher: str | None` - which matcher fired (`"keyword"` or `"semantic"`).
+- `matcher: str | None` - which matcher answered: `"reason"` (the LLM router) or
+  `"keyword"` (the lexical fallback).
+
+The reasoning router also fills three typed fields on `TaskMatch`:
+
+- `match.type: str` - `"task"`, `"capability"`, `"unsupported"`, or `"none"`.
+- `match.reasoning: str` - one to three sentences on why it routed there.
+- `match.confidence: str` - `"high"` / `"medium"` / `"low"`.
+- `match.capability: Capability | None` - the capability lane (`id`, `label`,
+  `category`, `category_id`, `desc`) when `type == "capability"`. See
+  [Capabilities](#capabilities).
 
 A robust pattern handles the no-match and ambiguous cases instead of blindly
 trusting `chosen`:
@@ -161,6 +175,55 @@ console.log(task.id, task.defaultScorer, "blob_input=", task.hasBlobInput);
 
 To browse the whole catalog instead of matching, use `pa.tasks.list()`, which
 returns `list[Task]`.
+
+### Capabilities
+
+Not every job is a numbered benchmark task. When the work is something Pareta
+broadly supports but no specific task fits, `match` routes to a **capability**
+lane (`type == "capability"`). The lanes are:
+
+| Capability | What it covers | Open model |
+|---|---|---|
+| `chat` | Open-ended text — Q&A, summarize, rewrite, translate | `gpt-oss-120b` |
+| `coding` | Write, refactor, or debug code from a description | `qwen3-coder-next-fp8` |
+| `agentic` | A model that reasons and plans multi-step tool use over your own tools/data | `qwen3-coder-next-fp8` |
+| `vision` | Open-ended understanding of an image — describe, read text, interpret a chart | `qwen3-vl-32b-instruct-fp8` |
+| `asr` | Speech-to-text: transcribe audio across 50+ languages | `qwen3-asr-1.7b` |
+| `tts` | Text-to-speech: synthesize natural speech from text | `kokoro-82m` |
+
+Each capability is **benchmarkable like any other task** — it has a
+bring-your-own-data task (`general-chat`, `general-agentic`, `general-vision`,
+`general-asr`, `general-tts`) carrying the open model and the frontier baselines
+on its leaderboard, but **no pre-baked quality/cost numbers**: both axes come
+from a live run on your own data. So you discover and evaluate a capability with
+the same `match` → `leaderboard` → `evals` loop as a numbered task. The capability
+lane is a confident route, not a weak fallback. (Coding is the exception: its
+intent maps to `capability:coding`, but the benchmarked coding tasks —
+`function-completion`, `code-generation` — carry real pre-baked numbers, so
+they behave like any other numbered task.)
+
+Two capabilities reach inference differently from a deployed chat endpoint:
+
+- **Speech (`asr`, `tts`)** runs over the dedicated `pa.audio` namespace —
+  `pa.audio.transcriptions(...)` and `pa.audio.speech(...)` — not
+  `chat.completions` (see [HTTP API](../reference/http-api.md#speech-audio) for
+  the underlying routes). They are billed **per
+  minute** of audio. `general-asr` is scored on **WER** against your reference
+  transcripts; `general-tts` has **no automatic quality metric** (synthesized
+  audio can't be auto-graded), so its run records **cost and latency only**.
+- **Capability chat endpoints** (chat/coding/agentic/vision) are billed **per
+  token** rather than the flat per-request rate of a numbered task, because their
+  request shapes are open-ended.
+
+### Unsupported intents
+
+When the intent is something Pareta does **not** do at all — generating
+video/images/music, taking a real-world action (send an email, place an order,
+control a device), or fetching live data — `match` returns `type ==
+"unsupported"` (`matched == False`, `chosen == None`). This is the correct
+answer, not a failure: surface it to the user and, in the dashboard, the "Don't
+see your task?" card captures the request for the operator team
+(`POST /v1/task-requests`, session-authenticated — there is no SDK method for it).
 
 ---
 
@@ -469,8 +532,9 @@ SDK never exposes balance or payment.
 ## Reference
 
 ### `tasks.match(query, *, top_k=5) -> TaskMatch`
-Free-text intent to ranked candidate tasks. Raises `ValueError` on an empty
-query. Deterministic keyword matcher (semantic backstop on the backend).
+Free-text intent to one match. Raises `ValueError` on an empty query. LLM
+reasoning router (keyword fallback) that returns a benchmarked task, a capability
+lane, or `unsupported` — see [Capabilities](#capabilities).
 
 ### `tasks.retrieve(task_id, *, examples_n=None) -> Task`
 A task's schema: `id`, `default_scorer`, `has_blob_input`. `examples_n` requests
@@ -490,10 +554,16 @@ and the roster is capability-filtered (vision-only for document tasks). Feed `id
 into `evals.runs.create(frontier=[...])`.
 
 #### `TaskMatch`
-`query`, `matched: bool`, `chosen: TaskMatchCandidate | None`,
-`candidates: list[TaskMatchCandidate]`, `ambiguous: bool`, `matcher: str | None`.
-Each `TaskMatchCandidate` has `task_id`, `score` (`[0, 1]`), `confidence`
-(`"high"`/`"medium"`/`"low"`).
+`query`, `type` (`"task"`/`"capability"`/`"unsupported"`/`"none"`),
+`matched: bool`, `chosen: TaskMatchCandidate | None`,
+`candidates: list[TaskMatchCandidate]`, `capability: Capability | None`,
+`reasoning: str | None`, `confidence: str | None`, `ambiguous: bool`,
+`matcher: str | None` (`"reason"`/`"keyword"`). Each `TaskMatchCandidate` has
+`task_id`, `score` (`[0, 1]`), `confidence` (`"high"`/`"medium"`/`"low"`).
+
+#### `Capability`
+`id`, `label`, `category`, `category_id`, `desc` — the general lane a match
+resolved to (on `TaskMatch.capability` when `type == "capability"`).
 
 #### `Leaderboard`
 `task_id`, `metric`, `cost_unit`, `recommended: str | None`,

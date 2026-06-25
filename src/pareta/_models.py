@@ -174,6 +174,24 @@ class Endpoint(_Base):
     def is_live(self) -> bool:
         return self._raw.get("status") == "live"
 
+    @property
+    def recommended_system_prompt(self) -> str | None:
+        """For a structured-extraction endpoint (contract / SEC / ICD …), the
+        system prompt the benchmark was measured with. The proxy applies it
+        automatically when you send no `system` message, so a deployed model
+        matches its leaderboard quality by default; it's returned here so you can
+        read it, or override it by sending your own `system` message. `None` when
+        the task has no injectable prompt (see `prompt_scaffold` for classifiers)."""
+        return self._raw.get("recommendedSystemPrompt")
+
+    @property
+    def prompt_scaffold(self) -> str | None:
+        """For a fixed-label classification endpoint, a copy-and-customize `system`
+        prompt template. Unlike `recommended_system_prompt` it is NEVER auto-applied
+        — the label set is yours, not the benchmark's — so you fill in your own
+        categories and send it as your `system` message. `None` for other tasks."""
+        return self._raw.get("promptScaffold")
+
 
 def _endpoint_list(raw) -> list[Endpoint]:
     """GET /v1/endpoints returns a bare JSON array."""
@@ -214,13 +232,57 @@ class TaskMatchCandidate(_Base):
         return self._raw.get("confidence")
 
 
+class Capability(_Base):
+    """A general capability lane (chat / coding / agentic / vision / asr / tts)
+    the match resolved to — returned on `TaskMatch.capability` when
+    `TaskMatch.type == "capability"`. `id` is the lane id; `category` /
+    `category_id` point at its catalog category."""
+
+    @property
+    def id(self) -> str | None:
+        return self._raw.get("id")
+
+    @property
+    def label(self) -> str | None:
+        return self._raw.get("label")
+
+    @property
+    def category(self) -> str | None:
+        return self._raw.get("category")
+
+    @property
+    def category_id(self) -> str | None:
+        return self._raw.get("category_id")
+
+    @property
+    def desc(self) -> str | None:
+        return self._raw.get("desc")
+
+
 class TaskMatch(_Base):
-    """Result of tasks.match(): `.matched`, `.chosen` (best task or None),
-    `.candidates` (ranked alternates)."""
+    """Result of tasks.match(): an LLM router reasons about intent and returns
+    ONE outcome via `.type`:
+
+      - "task"        a benchmarked task fit → `.chosen.task_id`, deploy it.
+      - "capability"  a general lane → `.capability` (chat/coding/agentic/
+                      vision/asr/tts).
+      - "unsupported" Pareta does not cover this request (a correct answer, not
+                      an error); `.reasoning` explains why.
+      - "none"        the router was unavailable and the lexical fallback found
+                      nothing confident.
+
+    Legacy keys (`.matched`, `.chosen`, `.candidates`, `.ambiguous`, `.matcher`)
+    are kept for backward compatibility; `.reasoning` / `.confidence` are
+    populated by the reasoning matcher."""
 
     @property
     def query(self) -> str | None:
         return self._raw.get("query")
+
+    @property
+    def type(self) -> str | None:
+        """One of 'task' | 'capability' | 'unsupported' | 'none'."""
+        return self._raw.get("type")
 
     @property
     def matched(self) -> bool:
@@ -232,6 +294,12 @@ class TaskMatch(_Base):
         return TaskMatchCandidate(c) if c else None
 
     @property
+    def capability(self) -> Capability | None:
+        """The general lane this matched (only when `.type == "capability"`)."""
+        c = self._raw.get("capability")
+        return Capability(c) if c else None
+
+    @property
     def candidates(self) -> list[TaskMatchCandidate]:
         return [TaskMatchCandidate(c) for c in (self._raw.get("candidates") or [])]
 
@@ -240,8 +308,81 @@ class TaskMatch(_Base):
         return bool(self._raw.get("ambiguous"))
 
     @property
+    def reasoning(self) -> str | None:
+        """The router's natural-language rationale (reasoning matcher only)."""
+        return self._raw.get("reasoning")
+
+    @property
+    def confidence(self) -> str | None:
+        """Match confidence ('high' | 'medium' | 'low'); None on the lexical
+        fallback."""
+        return self._raw.get("confidence")
+
+    @property
     def matcher(self) -> str | None:
+        """'reason' (LLM router) or 'keyword' (lexical fallback)."""
         return self._raw.get("matcher")
+
+
+# ── audio (speech) ─────────────────────────────────────────────────────
+class Transcription(_Base):
+    """Speech-to-text result from `audio.transcriptions(...)`.
+    `.text` is the transcript; `.duration_s` is the input audio length that was
+    metered (per minute)."""
+
+    @property
+    def text(self) -> str | None:
+        return self._raw.get("text")
+
+    @property
+    def language(self) -> str | None:
+        return self._raw.get("language")
+
+    @property
+    def duration_s(self) -> float | None:
+        return self._raw.get("duration_s")
+
+    def __str__(self) -> str:
+        return self.text or ""
+
+
+class Speech(_Base):
+    """Text-to-speech result from `audio.speech(...)`. `.audio` is the decoded
+    audio bytes (use `.save(path)` to write a file); `.duration_s` is the output
+    audio length that was metered (per minute)."""
+
+    @property
+    def audio(self) -> bytes:
+        """The synthesized audio, base64-decoded to raw bytes."""
+        b64 = self._raw.get("audio_base64") or ""
+        from base64 import b64decode
+
+        return b64decode(b64) if b64 else b""
+
+    @property
+    def audio_base64(self) -> str | None:
+        return self._raw.get("audio_base64")
+
+    @property
+    def sample_rate(self) -> int | None:
+        return self._raw.get("sample_rate")
+
+    @property
+    def duration_s(self) -> float | None:
+        return self._raw.get("duration_s")
+
+    @property
+    def format(self) -> str | None:
+        """Container/codec of the returned audio (e.g. 'wav')."""
+        return self._raw.get("format")
+
+    def save(self, path) -> "Speech":
+        """Write the decoded audio bytes to `path` (str or os.PathLike).
+        Returns self for chaining."""
+        from pathlib import Path
+
+        Path(path).write_bytes(self.audio)
+        return self
 
 
 # ── evals ─────────────────────────────────────────────────────────────

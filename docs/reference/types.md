@@ -216,21 +216,41 @@ free-text intent to a task.
 | Property | Type | Notes |
 |---|---|---|
 | `query` | `str \| None` | The query, echoed back |
+| `type` | `str \| None` | `"task"`, `"capability"`, `"unsupported"`, or `"none"` |
 | `matched` | `bool` | `True` when a high-confidence match was found |
 | `chosen` | `TaskMatchCandidate \| None` | The best candidate, or `None` if nothing matched confidently |
+| `capability` | `Capability \| None` | The general lane, when `type == "capability"` |
 | `candidates` | `list[TaskMatchCandidate]` | Top-K ranked alternates |
+| `reasoning` | `str \| None` | The router's rationale (reasoning matcher only) |
+| `confidence` | `str \| None` | `"high"` / `"medium"` / `"low"` (reasoning matcher only) |
 | `ambiguous` | `bool` | `True` when the top two scores are close |
-| `matcher` | `str \| None` | Which strategy answered: `"keyword"` or `"semantic"` |
+| `matcher` | `str \| None` | Which strategy answered: `"reason"` (LLM router) or `"keyword"` (fallback) |
 
 ```python
 m = pa.tasks.match("pull totals and dates out of vendor invoices", top_k=5)
-if m.matched and m.chosen:
+if m.type == "task" and m.chosen:
     print("best:", m.chosen.task_id, m.chosen.score, m.chosen.confidence)
+elif m.type == "capability" and m.capability:
+    print("capability:", m.capability.id, m.capability.label)
 else:
-    for c in m.candidates:                  # fall back to ranked alternates
-        print(c.task_id, c.score, c.confidence)
-print("ambiguous?", m.ambiguous, "via", m.matcher)
+    print(m.type, "—", m.reasoning)         # "unsupported" / "none"
+print("via", m.matcher)
 ```
+
+See [Capabilities](../guide/discovery.md#capabilities) for the general lanes.
+
+### Capability
+
+The general capability lane a match resolved to — on `TaskMatch.capability` when
+`TaskMatch.type == "capability"`.
+
+| Property | Type | Notes |
+|---|---|---|
+| `id` | `str \| None` | The lane id (`chat`/`coding`/`agentic`/`vision`/`asr`/`tts`) |
+| `label` | `str \| None` | Human-readable label |
+| `category` | `str \| None` | Catalog category name |
+| `category_id` | `str \| None` | Catalog category id |
+| `desc` | `str \| None` | One-line description |
 
 ### TaskMatchCandidate
 
@@ -309,6 +329,43 @@ for fm in pa.evals.frontier_models(task="contract-key-fields"):
     flag = "vision" if fm.vision else "text"
     note = " (on leaderboard)" if fm.benchmarked else ""
     print(fm.id, fm.vendor, flag, note)
+```
+
+## Audio types
+
+The Speech lanes (`asr`, `tts`) return these from the `audio` namespace.
+
+### Transcription
+
+Returned from `audio.transcriptions(audio, language=...)`. Speech-to-text.
+
+| Property | Type | Notes |
+|---|---|---|
+| `text` | `str \| None` | The transcript (also `str(transcription)`) |
+| `language` | `str \| None` | Detected (or supplied) language |
+| `duration_s` | `float \| None` | Input audio length, metered per minute |
+
+```python
+t = pa.audio.transcriptions("call.wav")   # path | bytes | base64
+print(t.text, t.language, t.duration_s)
+```
+
+### Speech
+
+Returned from `audio.speech(text, voice=...)`. Text-to-speech.
+
+| Property | Type | Notes |
+|---|---|---|
+| `audio` | `bytes` | The synthesized audio, base64-decoded |
+| `audio_base64` | `str \| None` | The raw base64 the server returned |
+| `sample_rate` | `int \| None` | Sample rate of the audio |
+| `duration_s` | `float \| None` | Output audio length, metered per minute |
+| `format` | `str \| None` | Container/codec (e.g. `"wav"`) |
+
+`save(path)` writes the decoded bytes to a file and returns `self`.
+
+```python
+pa.audio.speech("Hello from Pareta.").save("out.wav")
 ```
 
 ## Evaluation types
