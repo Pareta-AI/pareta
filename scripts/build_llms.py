@@ -71,7 +71,7 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
     ("Guide", "guide", [
         "installation", "quickstart", "core-concepts", "inference",
         "deploying-endpoints", "discovery", "evaluation", "errors-and-retries",
-        "async", "configuration",
+        "async", "configuration", "cli", "mcp",
     ]),
     ("Examples", "examples", [
         "deploy-and-infer", "find-and-deploy-best-model", "evaluate-on-your-data",

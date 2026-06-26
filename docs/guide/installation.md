@@ -27,6 +27,17 @@ poetry add pareta
 
 The package ships type hints (`py.typed`), so editors and `mypy` get full autocomplete on every method and response model.
 
+### Optional extras: CLI and MCP server
+
+Two more interfaces ship as optional extras on the same Python package:
+
+```bash
+pip install "pareta[cli]"     # the `pareta` shell command
+pip install "pareta[mcp]"     # the `pareta-mcp` Model Context Protocol server
+```
+
+The [CLI](cli.md) gives you the whole control plane as shell commands (`pareta endpoints deploy …`); the [MCP server](mcp.md) exposes it to an AI agent (Claude Desktop, Cursor) as tools. Both authenticate from the same `PARETA_API_KEY`. Each installs a console script, so an isolated install with [`pipx`](https://pipx.pypa.io) (`pipx install "pareta[cli]"`) keeps it off your project's dependency tree while still putting the command on your PATH.
+
 ## Authenticate
 
 Every request is authenticated with a `pareta_sk_` secret key sent as a Bearer token. You mint keys in the [dashboard](https://pareta.ai) — key management is browser-only, and the SDK only ever *consumes* a key. It never creates, lists, or revokes them.
@@ -301,3 +312,5 @@ This is handy for inference-only workloads or dropping Pareta into an existing O
 - [Tasks & the catalog](discovery.md) — discover benchmark tasks and the `recommended` model alias.
 - [Evals](evaluation.md) — build eval sets and run open vs. frontier comparisons.
 - [Errors & retries](errors-and-retries.md) — the typed exception hierarchy and retry policy.
+- [The `pareta` CLI](cli.md) — the same control plane from your shell (`pip install "pareta[cli]"`).
+- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).

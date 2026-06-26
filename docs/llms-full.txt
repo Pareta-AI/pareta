@@ -41,6 +41,17 @@ poetry add pareta
 
 The package ships type hints (`py.typed`), so editors and `mypy` get full autocomplete on every method and response model.
 
+### Optional extras: CLI and MCP server
+
+Two more interfaces ship as optional extras on the same Python package:
+
+```bash
+pip install "pareta[cli]"     # the `pareta` shell command
+pip install "pareta[mcp]"     # the `pareta-mcp` Model Context Protocol server
+```
+
+The [CLI](cli.md) gives you the whole control plane as shell commands (`pareta endpoints deploy …`); the [MCP server](mcp.md) exposes it to an AI agent (Claude Desktop, Cursor) as tools. Both authenticate from the same `PARETA_API_KEY`. Each installs a console script, so an isolated install with [`pipx`](https://pipx.pypa.io) (`pipx install "pareta[cli]"`) keeps it off your project's dependency tree while still putting the command on your PATH.
+
 ## Authenticate
 
 Every request is authenticated with a `pareta_sk_` secret key sent as a Bearer token. You mint keys in the [dashboard](https://pareta.ai) — key management is browser-only, and the SDK only ever *consumes* a key. It never creates, lists, or revokes them.
@@ -315,6 +326,8 @@ This is handy for inference-only workloads or dropping Pareta into an existing O
 - [Tasks & the catalog](discovery.md) — discover benchmark tasks and the `recommended` model alias.
 - [Evals](evaluation.md) — build eval sets and run open vs. frontier comparisons.
 - [Errors & retries](errors-and-retries.md) — the typed exception hierarchy and retry policy.
+- [The `pareta` CLI](cli.md) — the same control plane from your shell (`pip install "pareta[cli]"`).
+- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
 
 
 
@@ -5338,6 +5351,236 @@ try {
 - [Tasks and the catalog](discovery.md) — discover tasks, match intent, read leaderboards.
 - [Evals](evaluation.md) — score models on your own data, including `run.cost`.
 - [Errors](errors-and-retries.md) — the full exception hierarchy and how retries interact with it.
+
+
+
+---
+
+<!-- guide/cli.md -->
+
+# The `pareta` CLI
+
+The `pareta` command is the SDK's control plane in your shell: match a task, read a leaderboard, deploy and operate endpoints, run an eval, and call a model — each as one command, rendered as a table or, with `--json`, as machine-readable output for scripts. It ships with the Python package (`pip install "pareta[cli]"`) and, once installed, works from any shell regardless of your project's language.
+
+## Install
+
+The CLI is an optional extra on the Python package — it adds `typer` + `rich`:
+
+```bash
+pip install "pareta[cli]"
+```
+
+Because the install puts a `pareta` console script on your PATH, an isolated install with [`pipx`](https://pipx.pypa.io) is often cleaner — it keeps the CLI and its dependencies out of your project's environment while still putting the command on your PATH:
+
+```bash
+pipx install "pareta[cli]"
+```
+
+Either way you get the same command. Confirm it:
+
+```bash
+pareta --version
+```
+
+## Authenticate
+
+The CLI reads the same environment as the SDK — `PARETA_API_KEY` (required) and the optional `PARETA_BASE_URL`. Mint a `pareta_sk_` key in the [dashboard](https://pareta.ai) and export it:
+
+```bash
+export PARETA_API_KEY="pareta_sk_…"
+```
+
+There is no `login` command and no config file: auth *is* the environment, so the same export works in your shell, a Makefile, or CI. A missing or bad key prints a one-line error to stderr and exits non-zero (`2` for an auth/config problem you can fix locally, `1` for a genuine API error) — never a traceback.
+
+## Output: tables or `--json`
+
+Every command prints a human-readable table by default. Add the global `--json` (or `-j`) flag — **before** the subcommand — to get the raw JSON the SDK returns instead, for piping into `jq` or a script:
+
+```bash
+pareta --json models list | jq '.[].id'
+```
+
+Data goes to stdout and diagnostics to stderr, so piped output stays clean.
+
+## Command tree
+
+`pareta --help` (or `pareta <group> --help`) documents the whole tree. The groups mirror the SDK's resource namespaces.
+
+### `tasks` — browse the catalog + match intent
+
+```bash
+pareta tasks match "pull the key fields out of these contracts"   # intent → task / capability / unsupported
+pareta tasks list                                                 # every benchmarked task
+pareta tasks show contract-key-fields                             # one task's schema + default scorer
+pareta tasks leaderboard contract-key-fields                      # open models ranked + the frontier baseline
+pareta tasks recommended contract-key-fields                      # the model `deploy` picks by default
+```
+
+### `models` — the endpoints you can call
+
+```bash
+pareta models list            # deployed, callable models (each id works as a chat target)
+```
+
+### `endpoints` — deploy + operate
+
+```bash
+pareta endpoints deploy --task contract-key-fields                          # deploy the recommended model (streams progress)
+pareta endpoints deploy --task contract-key-fields --model qwen-1 --wait    # pick a model, block until live
+pareta endpoints list                                                       # your org's endpoints + status
+pareta endpoints show ep_contract_kie                                       # one endpoint's full record
+pareta endpoints stop ep_contract_kie                                       # halt GPU billing (resumable)
+pareta endpoints start ep_contract_kie                                      # resume a stopped endpoint
+pareta endpoints metrics ep_contract_kie                                    # latency / throughput
+pareta endpoints cost ep_contract_kie                                       # spend over the reporting window
+pareta endpoints delete ep_contract_kie --yes                               # destructive; prompts unless --yes
+```
+
+Without `--wait`, `deploy` streams the provisioning events as they happen; with `--wait` it blocks and prints the live endpoint. Pareta picks the GPU and serving config — there is no hardware flag.
+
+### `evals` — benchmark on your own data
+
+```bash
+# Build a set on the fly from a JSONL file and compare two open models, with frontier baselines:
+pareta evals run --task contract-key-fields --file rows.jsonl \
+  --models qwen-1 --models qwen-2 --frontier --wait
+
+# Or run an existing eval set:
+pareta evals run --eval-set es_abc --models qwen-1 --wait
+
+# Manage eval sets (your data rows):
+pareta evals sets create --task contract-key-fields --file rows.jsonl
+pareta evals sets list
+pareta evals sets show es_abc
+pareta evals sets delete es_abc --yes
+```
+
+`--models` is repeatable and required (the open candidates to evaluate). `--frontier` adds the task's benchmarked vendor models as baselines. Each item in `--file` is one JSON object per line; eval runs are metered against your org balance.
+
+### `chat` — one-shot inference
+
+```bash
+pareta chat ep_contract_kie "Summarize this contract clause: …"     # prompt as an argument
+echo "Summarize this clause: …" | pareta chat ep_contract_kie        # or piped on stdin
+pareta chat ep_contract_kie "Tell me a story" --stream               # stream tokens as they arrive
+```
+
+The first argument is an endpoint/model id (from `endpoints list` or `models list`). Inference is metered.
+
+### `audio` — speech in and out
+
+```bash
+pareta audio transcribe meeting.wav                         # speech-to-text (prints the transcript)
+pareta audio speak "Hello from Pareta" --out hello.wav      # text-to-speech (writes an audio file)
+```
+
+Both are metered per minute of audio.
+
+## Scripting
+
+Because every command takes `--json` and exits non-zero on failure, the CLI composes into shell pipelines and CI. For example, deploy the recommended model for a task, capture its id, call it, then pause billing:
+
+```bash
+export PARETA_API_KEY="pareta_sk_…"
+
+EP=$(pareta --json endpoints deploy --task contract-key-fields --wait | jq -r '.id')
+pareta chat "$EP" "What is the contract's effective date?"
+pareta endpoints stop "$EP"          # pause billing when you're done
+```
+
+## Next steps
+
+- [MCP server](mcp.md) — expose the same control plane to an AI agent (Claude Desktop, Cursor) as tools.
+- [Installation & authentication](installation.md) — the underlying SDK, the `pareta_sk_` key, and `from_env()`.
+- [Finding the right model](discovery.md) — the match → leaderboard → recommended loop the `tasks` group drives.
+- [Deploying & operating endpoints](deploying-endpoints.md) — the deploy / lifecycle / metrics surface behind the `endpoints` group.
+
+
+
+---
+
+<!-- guide/mcp.md -->
+
+# MCP server
+
+`pareta-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes Pareta's control plane to an AI agent (Claude Desktop, Cursor, …) as tools — so the agent can match a task, read a leaderboard, deploy and operate endpoints, run an eval, and call a model on your behalf. It ships with the Python package (`pip install "pareta[mcp]"`) and speaks stdio, so any MCP-capable client can drive it regardless of your project's language.
+
+## Install it in its own environment
+
+Like any MCP server, `pareta-mcp` has its own dependency tree (the `mcp` runtime, which pulls in `starlette`). Install it **isolated** — not into an application or project virtualenv, where those dependencies can clash with, say, a FastAPI app, and where the console script may not land on your PATH.
+
+The simplest path is [`uvx`](https://docs.astral.sh/uv/): it runs the server on demand in an ephemeral, isolated environment with nothing to install ahead of time. Point your MCP client's `command` at `uvx`:
+
+```json
+{
+  "mcpServers": {
+    "pareta": {
+      "command": "uvx",
+      "args": ["--from", "pareta[mcp]", "pareta-mcp"],
+      "env": { "PARETA_API_KEY": "pareta_sk_…" }
+    }
+  }
+}
+```
+
+Prefer a persistent install? [`pipx`](https://pipx.pypa.io) puts `pareta-mcp` on your PATH in a dedicated venv:
+
+```bash
+pipx install "pareta[mcp]"
+```
+
+…then point the client's `command` straight at the script:
+
+```json
+{
+  "mcpServers": {
+    "pareta": {
+      "command": "pareta-mcp",
+      "env": { "PARETA_API_KEY": "pareta_sk_…" }
+    }
+  }
+}
+```
+
+Avoid a plain `pip install "pareta[mcp]"` into a shared/app environment — its `mcp`/`starlette` dependencies can clash with the app's FastAPI, and the console script may not land on your PATH.
+
+### Claude Desktop
+
+In Claude Desktop, open **Settings → Developer → Edit Config** to edit `claude_desktop_config.json`, add one of the JSON blocks above, and restart the app. The `pareta` tools then appear in the tool menu.
+
+## Authenticate
+
+Set `PARETA_API_KEY` (a `pareta_sk_` key from the [dashboard](https://pareta.ai)) in the server's `env`, as shown above; `PARETA_BASE_URL` is optional and defaults to the production API. The key is read lazily on the first tool call, so the server starts even if it's unset — you get a clear error back when a tool runs, never a crashed server.
+
+## Smoke-test it
+
+Run the server directly to confirm it starts. It then waits for an MCP client to connect over stdio — there's no interactive output, so Ctrl-C to exit:
+
+```bash
+PARETA_API_KEY=pareta_sk_… uvx --from "pareta[mcp]" pareta-mcp
+```
+
+## The tools
+
+The server exposes the full control plane, grouped the same way as the SDK and CLI:
+
+- **Discovery** — `match_task`, `list_tasks`, `get_task`, `get_leaderboard`, `recommended_model`, `list_models`. Start with `match_task` to turn a plain-language goal into a task.
+- **Provisioning** — `deploy_endpoint`, `list_endpoints`, `get_endpoint`, `start_endpoint`, `stop_endpoint`, `delete_endpoint`, `endpoint_metrics`, `endpoint_cost`.
+- **Eval** — `run_eval`, `get_eval_run` (bring-your-own-data, metered).
+- **Inference** — `chat` (metered).
+- **Audio** — `transcribe`, `speak` (metered per minute).
+
+A typical agent flow: `match_task("pull the key fields out of contracts")` → `get_leaderboard(task)` → `deploy_endpoint(task)` → `chat(endpoint_id, …)`.
+
+## Spending money is gated by your client's approval
+
+Some tools cost money or change infrastructure: `deploy_endpoint` / `start_endpoint` spin up paid GPU capacity; `chat` / `run_eval` / `transcribe` / `speak` debit your org balance; and `delete_endpoint` is irreversible. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which model, which endpoint) before approving a provisioning or inference call. Tool errors — a missing key, an out-of-credit balance, a failed deploy — come back as a clean `{"error": …}` message the agent can read, not a crash.
+
+## Next steps
+
+- [The `pareta` CLI](cli.md) — the same control plane as a shell command.
+- [Core concepts](core-concepts.md) — tasks, per-task aliases, hidden hardware, and the metering the agent is driving.
+- [Finding the right model](discovery.md) — the discovery loop behind `match_task` / `get_leaderboard`.
 
 
 

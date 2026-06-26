@@ -75,6 +75,8 @@ Start-to-finish, in reading order — every page shows Python and TypeScript. Se
 - [Errors, retries & timeouts](./guide/errors-and-retries.md) — the `ParetaError` hierarchy, which errors to catch, and the retry policy.
 - [Async & concurrency](./guide/async.md) — Python's `AsyncPareta` vs TypeScript's Promise-only client, and fanning out concurrent calls.
 - [Configuration](./guide/configuration.md) — API key, base URL, timeouts, retries, and injecting a custom HTTP client.
+- [The `pareta` CLI](./guide/cli.md) — the whole control plane as a shell command (`pip install "pareta[cli]"`), tables or `--json`.
+- [MCP server](./guide/mcp.md) — expose the control plane to an AI agent (Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`).
 
 ## Examples
 
