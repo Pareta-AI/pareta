@@ -17,7 +17,8 @@ Almost every example builds the client with `Pareta.from_env()`, which reads `PA
 9. [Async usage](./async.md) — `AsyncPareta`: `async with`/`aclose` lifecycle, awaiting every method, `async for` on chat and deploy streams, and fanning out work concurrently with `asyncio.gather`.
 10. [Configuration](./configuration.md) — building the client: `api_key`, `base_url` (prod vs staging), `timeout`, `max_retries`, injecting your own `httpx` client, env vars, and lifecycle.
 11. [The `pareta` CLI](./cli.md) — the same control plane as a shell command (`pip install "pareta[cli]"`): `tasks`/`models`/`endpoints`/`evals`/`chat`/`audio`, with `--json` everywhere.
-12. [MCP server](./mcp.md) — expose the control plane to an AI agent (Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`); set it up with `uvx`/`pipx`.
+12. [MCP server](./mcp.md) — expose the control plane to an AI agent (Claude Code, Codex, Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`); set it up with `uvx`/`pipx`.
+13. [The `/pareta` skill](./skill.md) — a `SKILL.md` that drives the CLI as a slash command in Claude Code and Codex (same file works in both).
 
 ## Where to go next
 

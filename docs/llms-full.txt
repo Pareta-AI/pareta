@@ -327,7 +327,8 @@ This is handy for inference-only workloads or dropping Pareta into an existing O
 - [Evals](evaluation.md) — build eval sets and run open vs. frontier comparisons.
 - [Errors & retries](errors-and-retries.md) — the typed exception hierarchy and retry policy.
 - [The `pareta` CLI](cli.md) — the same control plane from your shell (`pip install "pareta[cli]"`).
-- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
+- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Code, Codex, Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
+- [The `/pareta` skill](skill.md) — a slash-command `SKILL.md` for Claude Code and Codex that drives the CLI.
 
 
 
@@ -5548,6 +5549,49 @@ Avoid a plain `pip install "pareta[mcp]"` into a shared/app environment — its 
 
 In Claude Desktop, open **Settings → Developer → Edit Config** to edit `claude_desktop_config.json`, add one of the JSON blocks above, and restart the app. The `pareta` tools then appear in the tool menu.
 
+### Claude Code
+
+[Claude Code](https://docs.claude.com/en/docs/claude-code) speaks MCP natively — add the server in one command. The flags go *before* the `--`; everything after it is the server's launch command:
+
+```bash
+claude mcp add pareta --scope user \
+  --env PARETA_API_KEY=pareta_sk_… \
+  -- uvx --from "pareta[mcp]" pareta-mcp
+```
+
+`--scope user` makes it available in every project; `--scope local` (the default) is this project only, and `--scope project` writes a shared `.mcp.json`. Verify with `claude mcp list` (or `/mcp` inside a session): `pareta` should show **connected** with its tools.
+
+To commit it for a team without hardcoding the key, add a project-root `.mcp.json` and reference the key from the environment — Claude Code expands `${PARETA_API_KEY}` at startup:
+
+```json
+{
+  "mcpServers": {
+    "pareta": {
+      "command": "uvx",
+      "args": ["--from", "pareta[mcp]", "pareta-mcp"],
+      "env": { "PARETA_API_KEY": "${PARETA_API_KEY}" }
+    }
+  }
+}
+```
+
+### Codex
+
+[Codex](https://developers.openai.com/codex) reads MCP servers from `~/.codex/config.toml`. Add a `[mcp_servers.pareta]` table with the same stdio command:
+
+```toml
+[mcp_servers.pareta]
+command = "uvx"
+args = ["--from", "pareta[mcp]", "pareta-mcp"]
+
+[mcp_servers.pareta.env]
+PARETA_API_KEY = "pareta_sk_…"
+```
+
+### Cursor and other MCP clients
+
+Any MCP client takes the same stdio command. Use the JSON form from above (in Cursor, **Settings → MCP → Add**): point `command` at `uvx`, `args` at `["--from", "pareta[mcp]", "pareta-mcp"]`, and put `PARETA_API_KEY` in `env`.
+
 ## Authenticate
 
 Set `PARETA_API_KEY` (a `pareta_sk_` key from the [dashboard](https://pareta.ai)) in the server's `env`, as shown above; `PARETA_BASE_URL` is optional and defaults to the production API. The key is read lazily on the first tool call, so the server starts even if it's unset — you get a clear error back when a tool runs, never a crashed server.
@@ -5578,9 +5622,78 @@ Some tools cost money or change infrastructure: `deploy_endpoint` / `start_endpo
 
 ## Next steps
 
+- [The `/pareta` skill](skill.md) — the slash-command alternative: a `SKILL.md` that drives the CLI (Claude Code & Codex), instead of tools-over-a-server.
 - [The `pareta` CLI](cli.md) — the same control plane as a shell command.
 - [Core concepts](core-concepts.md) — tasks, per-task aliases, hidden hardware, and the metering the agent is driving.
 - [Finding the right model](discovery.md) — the discovery loop behind `match_task` / `get_leaderboard`.
+
+
+
+---
+
+<!-- guide/skill.md -->
+
+# The `/pareta` skill
+
+A [Pareta skill](https://github.com/Pareta-AI/pareta/blob/main/skills/pareta/SKILL.md) teaches an AI coding agent to drive the `pareta` CLI as a slash command — match a task to an open-weights model, deploy it (Pareta picks the GPU), run metered inference, and benchmark models on your own data. It's a single `SKILL.md` that works in both Claude Code and Codex, because they share the same skill format.
+
+## Skill vs. MCP server
+
+Two ways to put Pareta inside a coding agent — and you can use both:
+
+- **The [MCP server](mcp.md)** gives the agent Pareta's control plane as structured **tools** (`deploy_endpoint`, `run_eval`, …) it calls directly. Best when you want first-class, auto-discovered tools.
+- **This skill** is **instructions** — a `SKILL.md` the agent reads and follows, driving the `pareta` shell command. Best when you want a `/pareta` slash command and a guided workflow, and you've already installed the CLI.
+
+## Prerequisite
+
+The skill drives the CLI, so install it and set a key:
+
+```bash
+pipx install "pareta[cli]"            # or: pip install "pareta[cli]"
+export PARETA_API_KEY="pareta_sk_…"   # mint one in the dashboard
+```
+
+## Install in Claude Code
+
+Copy the skill into your personal skills directory (available from any project):
+
+```bash
+mkdir -p ~/.claude/skills/pareta
+curl -fsSL https://raw.githubusercontent.com/Pareta-AI/pareta/main/skills/pareta/SKILL.md \
+  -o ~/.claude/skills/pareta/SKILL.md
+```
+
+For a single repo, drop it at `.claude/skills/pareta/SKILL.md` instead. Then `/pareta` is available — and Claude Code also invokes it automatically when a request matches.
+
+## Install in Codex
+
+Codex uses the same skill format; only the directory differs:
+
+```bash
+mkdir -p ~/.codex/skills/pareta
+curl -fsSL https://raw.githubusercontent.com/Pareta-AI/pareta/main/skills/pareta/SKILL.md \
+  -o ~/.codex/skills/pareta/SKILL.md
+```
+
+For a single repo, check it in at `.codex/skills/pareta/SKILL.md`. Codex loads skills automatically when the task matches. (Codex's older custom prompts in `~/.codex/prompts/` are deprecated in favor of skills.)
+
+## What it does
+
+Once installed, ask in plain language — *"find the cheapest open model that extracts key fields from contracts and deploy it."* The skill walks the agent through:
+
+1. `pareta tasks match` — resolve the intent to a benchmarked task.
+2. `pareta tasks leaderboard` — rank open models, the recommended pick, and frontier savings.
+3. `pareta endpoints deploy --wait` — stand up the endpoint (Pareta picks the GPU).
+4. `pareta chat` — run inference; `pareta evals run` — benchmark on your own JSONL data.
+5. `pareta endpoints stop` / `cost` / `metrics` — operate and clean up.
+
+It bakes in the guardrails: deploy / inference / eval **spend your org balance**, so the agent confirms before provisioning or spending, and stops endpoints it deployed when the work is done.
+
+## Next steps
+
+- [MCP server](mcp.md) — the tools-over-a-server alternative (Claude Code, Codex, Claude Desktop, Cursor).
+- [The `pareta` CLI](cli.md) — the command surface the skill drives.
+- [Installation & authentication](installation.md) — install the CLI and mint a `pareta_sk_` key.
 
 
 
@@ -10263,8 +10376,9 @@ The client is a namespace router. Every capability hangs off it as an attribute.
 | `endpoints` | `Endpoints` | `AsyncEndpoints` | `deploy`, `list`, `retrieve`, `start`, `stop`, `delete`, and `metrics(id)`. | [endpoints](./endpoints.md) |
 | `tasks` | `Tasks` | `AsyncTasks` | Browse the benchmark catalog: `list`, `retrieve`, `match`, `leaderboard`, `recommended`. | [tasks](./tasks.md) |
 | `evals` | `Evals` | `AsyncEvals` | `evals.sets`, `evals.runs`, and `evals.frontier_models(...)`. Metered. | [evals](./evals.md) |
+| `audio` | `Audio` | `AsyncAudio` | Speech: `audio.transcriptions(...)` (ASR) and `audio.speech(...)` (TTS). Metered per minute. | [audio example](../examples/audio-transcribe-and-speak.py) |
 
-A tour of all five against one client:
+A tour of the core namespaces against one client:
 
 ```python
 from pareta import Pareta

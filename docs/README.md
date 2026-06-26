@@ -1,6 +1,6 @@
-# Pareta SDK
+# Pareta
 
-`pareta` is the official client for [Pareta](https://pareta.ai), available for **Python** and **TypeScript/JavaScript** — same API, same `pareta_sk_` key, same four things:
+[Pareta](https://pareta.ai) is a marketplace + control plane for open-weights models. Whichever interface you reach for, it does the same four things — behind one `pareta_sk_` key:
 
 - **Deploys open-weights models** as live endpoints. You name a task and a model; Pareta picks the GPU and serving config. There is no hardware knob.
 - **Serves metered OpenAI-compatible inference.** A deployed endpoint speaks the OpenAI chat-completions wire format, so this SDK and the stock `openai` client are interchangeable against it.
@@ -13,7 +13,18 @@ A few platform truths shape the whole API:
 - **Models are per-task aliases.** Open-weights ids are masked to public aliases like `qwen-vl-2`. Real ids never cross the SDK boundary. Frontier (vendor) ids are in the clear.
 - **Inference and evals are metered against your org balance.** A successful call debits credit. An empty balance raises `InsufficientCreditsError` (402). An eval run reports its billed total on `run.cost` (dollars). Top-up is browser-only; the SDK never touches billing.
 
-> **Python or TypeScript?** Both clients are at full parity. The one design difference: Python ships sync (`Pareta`) **and** async (`AsyncPareta`) clients; TypeScript has a single Promise-only `Pareta` (every method is `async`). Code samples throughout these docs show **Python** and **TypeScript** side by side.
+## Ways to use Pareta
+
+Several interfaces, one `pareta_sk_` key and one control plane behind them all — pick what fits how you work:
+
+- **SDK** (Python + TypeScript) — `pip install pareta` / `npm install pareta`. Deploy, infer, and eval from code. The rest of these docs.
+- **[CLI](./guide/cli.md)** — `pip install "pareta[cli]"`. The same control plane as the `pareta` shell command; tables, or `--json` for scripts.
+- **[MCP server](./guide/mcp.md)** — `pip install "pareta[mcp]"`. `pareta-mcp` exposes the control plane to an AI agent (Claude Code, Codex, Claude Desktop, Cursor) as tools.
+- **[`/pareta` skill](./guide/skill.md)** — a `SKILL.md` that drives the CLI as a slash command in Claude Code and Codex.
+
+And because inference is OpenAI-compatible, you can skip the library entirely and point the stock `openai` client at a deployed endpoint.
+
+> **Python or TypeScript?** Both SDK clients are at full parity. The one design difference: Python ships sync (`Pareta`) **and** async (`AsyncPareta`) clients; TypeScript has a single Promise-only `Pareta` (every method is `async`). Code samples throughout these docs show **Python** and **TypeScript** side by side.
 
 ## Install
 
@@ -76,7 +87,8 @@ Start-to-finish, in reading order — every page shows Python and TypeScript. Se
 - [Async & concurrency](./guide/async.md) — Python's `AsyncPareta` vs TypeScript's Promise-only client, and fanning out concurrent calls.
 - [Configuration](./guide/configuration.md) — API key, base URL, timeouts, retries, and injecting a custom HTTP client.
 - [The `pareta` CLI](./guide/cli.md) — the whole control plane as a shell command (`pip install "pareta[cli]"`), tables or `--json`.
-- [MCP server](./guide/mcp.md) — expose the control plane to an AI agent (Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`).
+- [MCP server](./guide/mcp.md) — expose the control plane to an AI agent (Claude Code, Codex, Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`).
+- [The `/pareta` skill](./guide/skill.md) — a `SKILL.md` that drives the CLI as a slash command in Claude Code and Codex.
 
 ## Examples
 
@@ -95,7 +107,7 @@ Copy-paste workflows for real jobs, in both languages. See the [examples index](
 
 Field-by-field API docs. Signatures are shown in Python; the TypeScript API mirrors them (camelCase names, options objects, `await`ed) — see any guide page for the TS form. See the [reference index](./reference/README.md).
 
-- [Client](./reference/client.md) — `Pareta` (and Python's `AsyncPareta`): `from_env`/`fromEnv`, constructor params, lifecycle, and the five resource namespaces.
+- [Client](./reference/client.md) — `Pareta` (and Python's `AsyncPareta`): `from_env`/`fromEnv`, constructor params, lifecycle, and the six resource namespaces.
 - [chat.completions](./reference/chat.md) — `chat.completions.create`, return types, streaming, and the error surface.
 - [models](./reference/models.md) — `models.list()` and the `Model` fields.
 - [endpoints](./reference/endpoints.md) — `deploy`/`list`/`retrieve`/`start`/`stop`/`delete`, the `Endpoint` object, and `metrics(id)`.

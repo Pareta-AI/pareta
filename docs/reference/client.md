@@ -216,8 +216,9 @@ The client is a namespace router. Every capability hangs off it as an attribute.
 | `endpoints` | `Endpoints` | `AsyncEndpoints` | `deploy`, `list`, `retrieve`, `start`, `stop`, `delete`, and `metrics(id)`. | [endpoints](./endpoints.md) |
 | `tasks` | `Tasks` | `AsyncTasks` | Browse the benchmark catalog: `list`, `retrieve`, `match`, `leaderboard`, `recommended`. | [tasks](./tasks.md) |
 | `evals` | `Evals` | `AsyncEvals` | `evals.sets`, `evals.runs`, and `evals.frontier_models(...)`. Metered. | [evals](./evals.md) |
+| `audio` | `Audio` | `AsyncAudio` | Speech: `audio.transcriptions(...)` (ASR) and `audio.speech(...)` (TTS). Metered per minute. | [audio example](../examples/audio-transcribe-and-speak.py) |
 
-A tour of all five against one client:
+A tour of the core namespaces against one client:
 
 ```python
 from pareta import Pareta

@@ -45,6 +45,49 @@ Avoid a plain `pip install "pareta[mcp]"` into a shared/app environment — its 
 
 In Claude Desktop, open **Settings → Developer → Edit Config** to edit `claude_desktop_config.json`, add one of the JSON blocks above, and restart the app. The `pareta` tools then appear in the tool menu.
 
+### Claude Code
+
+[Claude Code](https://docs.claude.com/en/docs/claude-code) speaks MCP natively — add the server in one command. The flags go *before* the `--`; everything after it is the server's launch command:
+
+```bash
+claude mcp add pareta --scope user \
+  --env PARETA_API_KEY=pareta_sk_… \
+  -- uvx --from "pareta[mcp]" pareta-mcp
+```
+
+`--scope user` makes it available in every project; `--scope local` (the default) is this project only, and `--scope project` writes a shared `.mcp.json`. Verify with `claude mcp list` (or `/mcp` inside a session): `pareta` should show **connected** with its tools.
+
+To commit it for a team without hardcoding the key, add a project-root `.mcp.json` and reference the key from the environment — Claude Code expands `${PARETA_API_KEY}` at startup:
+
+```json
+{
+  "mcpServers": {
+    "pareta": {
+      "command": "uvx",
+      "args": ["--from", "pareta[mcp]", "pareta-mcp"],
+      "env": { "PARETA_API_KEY": "${PARETA_API_KEY}" }
+    }
+  }
+}
+```
+
+### Codex
+
+[Codex](https://developers.openai.com/codex) reads MCP servers from `~/.codex/config.toml`. Add a `[mcp_servers.pareta]` table with the same stdio command:
+
+```toml
+[mcp_servers.pareta]
+command = "uvx"
+args = ["--from", "pareta[mcp]", "pareta-mcp"]
+
+[mcp_servers.pareta.env]
+PARETA_API_KEY = "pareta_sk_…"
+```
+
+### Cursor and other MCP clients
+
+Any MCP client takes the same stdio command. Use the JSON form from above (in Cursor, **Settings → MCP → Add**): point `command` at `uvx`, `args` at `["--from", "pareta[mcp]", "pareta-mcp"]`, and put `PARETA_API_KEY` in `env`.
+
 ## Authenticate
 
 Set `PARETA_API_KEY` (a `pareta_sk_` key from the [dashboard](https://pareta.ai)) in the server's `env`, as shown above; `PARETA_BASE_URL` is optional and defaults to the production API. The key is read lazily on the first tool call, so the server starts even if it's unset — you get a clear error back when a tool runs, never a crashed server.
@@ -75,6 +118,7 @@ Some tools cost money or change infrastructure: `deploy_endpoint` / `start_endpo
 
 ## Next steps
 
+- [The `/pareta` skill](skill.md) — the slash-command alternative: a `SKILL.md` that drives the CLI (Claude Code & Codex), instead of tools-over-a-server.
 - [The `pareta` CLI](cli.md) — the same control plane as a shell command.
 - [Core concepts](core-concepts.md) — tasks, per-task aliases, hidden hardware, and the metering the agent is driving.
 - [Finding the right model](discovery.md) — the discovery loop behind `match_task` / `get_leaderboard`.

@@ -313,4 +313,5 @@ This is handy for inference-only workloads or dropping Pareta into an existing O
 - [Evals](evaluation.md) — build eval sets and run open vs. frontier comparisons.
 - [Errors & retries](errors-and-retries.md) — the typed exception hierarchy and retry policy.
 - [The `pareta` CLI](cli.md) — the same control plane from your shell (`pip install "pareta[cli]"`).
-- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
+- [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Code, Codex, Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
+- [The `/pareta` skill](skill.md) — a slash-command `SKILL.md` for Claude Code and Codex that drives the CLI.
