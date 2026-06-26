@@ -113,6 +113,7 @@ Field-by-field API docs. Signatures are shown in Python; the TypeScript API mirr
 - [endpoints](./reference/endpoints.md) — `deploy`/`list`/`retrieve`/`start`/`stop`/`delete`, the `Endpoint` object, and `metrics(id)`.
 - [tasks](./reference/tasks.md) — `list`/`retrieve`/`match`/`leaderboard`/`recommended` and their response models.
 - [evals](./reference/evals.md) — `evals.sets`, `evals.runs`, and `evals.frontierModels`.
+- [audio](./reference/audio.md) — `audio.transcriptions` (speech-to-text) and `audio.speech` (text-to-speech), metered per minute.
 - [Exceptions](./reference/exceptions.md) — the `ParetaError` hierarchy and status-to-class mapping.
 - [Response types](./reference/types.md) — every response object plus the `.cost` vs `.costMicroUsd` money convention.
 - [Underlying HTTP API](./reference/http-api.md) — the `/v1` routes the SDK wraps (language-neutral).

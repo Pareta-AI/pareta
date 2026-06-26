@@ -13,6 +13,7 @@ Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the 
 - [endpoints](./endpoints.md) — `client.endpoints`: `deploy` (wait semantics + progress-event SSE), `list`/`retrieve`/`start`/`stop`/`delete`, the `Endpoint` object, and `metrics(id)` observability dimensions.
 - [tasks](./tasks.md) — `client.tasks`: `list`/`retrieve`/`match`/`leaderboard`/`recommended` with the `Task`/`TaskMatch`/`Leaderboard` response models.
 - [evals](./evals.md) — `client.evals`: `sets`, `runs`, and `frontier_models`, with `frontier=` resolution, metering, and response-object tables.
+- [audio](./audio.md) — `client.audio`: `transcriptions` (speech-to-text) and `speech` (text-to-speech), the per-minute metering, and the `Transcription`/`Speech` response objects.
 
 ## Types and errors
 

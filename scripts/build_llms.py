@@ -79,7 +79,7 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
         "cost-and-metrics", "migrate-from-openai",
     ]),
     ("Reference", "reference", [
-        "client", "chat", "models", "endpoints", "tasks", "evals",
+        "client", "chat", "models", "endpoints", "tasks", "evals", "audio",
         "exceptions", "types", "http-api",
     ]),
 ]
