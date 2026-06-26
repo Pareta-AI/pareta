@@ -3,6 +3,23 @@
 All notable changes to the `pareta` Python SDK. This project adheres to
 [Semantic Versioning](https://semver.org).
 
+## 0.2.1 — 2026-06-25
+
+Docs-only — no library, CLI, or MCP runtime behavior changes.
+
+### Changed
+
+- Recommend installing the `pareta-mcp` MCP server in its **own isolated
+  environment** via [`uvx`](https://docs.astral.sh/uv/) or
+  [`pipx`](https://pipx.pypa.io) rather than a plain `pip install`: its
+  `mcp`/`starlette` dependencies can clash with an app's (e.g. FastAPI), and a
+  `pip install --user` may leave the console script off your PATH. Updated the
+  README (the registration snippet now points `command` at `uvx`) and the
+  `pareta.mcp_server` module docstring accordingly.
+- Documentation site: added dedicated **CLI** and **MCP server** guide pages at
+  [docs.pareta.ai](https://docs.pareta.ai) (previously the CLI/MCP were covered
+  only in the README).
+
 ## 0.2.0 — 2026-06-25
 
 Purely additive — no breaking changes to the library API.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pareta"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python client for Pareta — deploy open-weights endpoints, run metered inference, and eval models on your own data."
 readme = "README.md"
 requires-python = ">=3.10"
