@@ -168,7 +168,7 @@ def test_chat_non_stream_prints_message(patch_client):
 
     completions = _ns(create=_create)
     patch_client(_fake_client(chat=_ns(completions=completions)))
-    result = runner.invoke(cli.app, ["chat", "ep_abc", "hi"])
+    result = runner.invoke(cli.app, ["chat", "hi", "--model", "ep_abc"])
     assert result.exit_code == 0
     assert "hello there" in result.output
     assert captured["model"] == "ep_abc"
@@ -187,7 +187,7 @@ def test_chat_reads_prompt_from_stdin(patch_client):
         return resp
 
     patch_client(_fake_client(chat=_ns(completions=_ns(create=_create))))
-    result = runner.invoke(cli.app, ["chat", "ep_abc"], input="from stdin")
+    result = runner.invoke(cli.app, ["chat", "--model", "ep_abc"], input="from stdin")
     assert result.exit_code == 0
     assert "ok" in result.output
 

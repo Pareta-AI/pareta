@@ -608,16 +608,80 @@ def sets_delete(
     _out.print(f"[red]deleted[/red] {eval_set_id}")
 
 
+# ── auto (the routing brain's surrounding surfaces) ─────────────────────
+auto_app = typer.Typer(no_args_is_help=True,
+                       help='model:"auto" — metrics + frontier comparison.')
+app.add_typer(auto_app, name="auto")
+
+
+@auto_app.command("metrics")
+def auto_metrics(ctx: typer.Context) -> None:
+    """Your org's model:"auto" traffic: requests, success rate, spend, and
+    the PROJECTED savings vs frontier. Read-only, free."""
+    state = _state(ctx)
+    try:
+        m = _client().auto.metrics()
+    except ParetaError as e:
+        raise _fail(e)
+    if state.json_output:
+        _print_json(m)
+        return
+    _out.print(f"requests (30d):     {m.get('requests_30d')}")
+    sr = m.get("success_rate_30d")
+    _out.print(f"success rate:       {sr * 100:.1f}%" if sr is not None else "success rate:       —")
+    _out.print(f"spend (30d):        ${(m.get('billed_micro_usd_30d') or 0) / 1e6:.4f}")
+    sv = m.get("savings_vs_frontier_micro_usd_30d")
+    mult = m.get("savings_multiple_30d")
+    if sv is not None:
+        _out.print(f"savings vs frontier: ${sv / 1e6:.4f}"
+                   + (f" ({mult}x cheaper, projected)" if mult else " (projected)"))
+
+
+@auto_app.command("compare")
+def auto_compare(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(..., help="The prompt to compare on."),
+    frontier: str = typer.Option("gpt-5.5", "--frontier", "-f",
+                                 help="Frontier model: gpt-5.5, gemini-3-5-flash, "
+                                      "gemini-3-1-pro, claude-sonnet-4-6."),
+) -> None:
+    """Run one prompt against model:"auto" AND a frontier vendor, side by
+    side, with both bills. METERED: two real calls."""
+    state = _state(ctx)
+    try:
+        client = _client()
+        auto_c = client.chat.completions.create(
+            model="auto", messages=[{"role": "user", "content": prompt}])
+        auto_text = auto_c.choices[0].message.content if auto_c.choices else ""
+        fr = client.auto.compare_frontier(
+            model=frontier, messages=[{"role": "user", "content": prompt}])
+    except ParetaError as e:
+        raise _fail(e)
+    if state.json_output:
+        _print_json({"auto": {"content": auto_text},
+                     "frontier": fr})
+        return
+    _out.print("[bold]Pareta (auto)[/bold]")
+    _out.print(auto_text or "")
+    _out.print(f"\n[bold]{fr.get('model')}[/bold]  "
+               f"(${(fr.get('cost_micro_usd') or 0) / 1e6:.4f} · "
+               f"{(fr.get('latency_ms') or 0) / 1000:.1f}s)")
+    _out.print(fr.get("content") or "")
+
+
 # ── chat ─────────────────────────────────────────────────────────────────
 @app.command("chat")
 def chat(
     ctx: typer.Context,
-    model: str = typer.Argument(..., help="Endpoint/model id to call."),
     prompt: Optional[str] = typer.Argument(None, help="Prompt text (omit to read from stdin)."),
+    model: str = typer.Option("auto", "--model", "-m",
+                              help='Model to call. The default "auto" is the routing '
+                                   "brain — Pareta picks the best model per request. "
+                                   "Pass an endpoint id to pin one model."),
     stream: bool = typer.Option(False, "--stream", "-s", help="Stream tokens to stdout."),
 ) -> None:
-    """Send a one-shot chat completion. Reads the prompt from the argument or,
-    if omitted, from stdin."""
+    """Send a one-shot chat completion (default model: "auto" — the routing
+    brain). Reads the prompt from the argument or, if omitted, from stdin."""
     state = _state(ctx)
     text = prompt if prompt is not None else sys.stdin.read()
     if not text or not text.strip():

@@ -9,6 +9,27 @@ A few platform truths that shape this page:
 - **Models are per-task aliases.** The `model` you pass is an endpoint id from [deploy](deploying-endpoints.md), or a callable model alias. Real open-weights model ids never reach you; the backend resolves them. You never pick a GPU.
 - **Inference is metered against your org balance.** A successful completion debits your balance. If the balance is empty, the call raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK has no balance or payment surface.
 
+## `model="auto"` — the routing brain
+
+The recommended model id for every request is the literal string `"auto"`.
+Pareta decomposes the request, routes each part to the cheapest model that
+holds frontier-grade quality, verifies checkable outputs (escalating to a
+frontier model on a failed check), and synthesizes one answer. One request,
+one debit; a request that errors out bills $0. Streaming works the same way —
+the answer streams token by token, and the SSE stream carries
+`: pareta-progress <stage>` comments (`planning` / `executing` / `answering`)
+you can surface as status.
+
+```python
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "…"}],
+)
+```
+
+Pass a specific endpoint id instead of `"auto"` only when you deliberately
+want one pinned model — everything below applies to both.
+
 ## Setup
 
 Mint a `pareta_sk_` key in the dashboard, export it, and build the client from the environment:

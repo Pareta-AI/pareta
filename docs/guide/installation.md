@@ -1,6 +1,6 @@
 # Installation & authentication
 
-The `pareta` package is the official client for [Pareta](https://pareta.ai), available for **Python** (`pip install pareta`) and **TypeScript/JavaScript** (`npm install pareta`). It deploys open-weights endpoints, runs metered OpenAI-compatible inference, browses the benchmark catalog, and evaluates models on your own data — all from code. This page gets you installed, authenticated, and making a first call.
+The `pareta` package is the official client for [Pareta](https://pareta.ai), available for **Python** (`pip install pareta`) and **TypeScript/JavaScript** (`npm install pareta`). It runs metered OpenAI-compatible inference against `model="auto"` (Pareta's routing brain — nothing to deploy), evaluates models on your own data, browses the benchmark catalog, and deploys dedicated open-weights endpoints — all from code. This page gets you installed, authenticated, and making a first call.
 
 A few platform truths to know up front, because they shape the whole API:
 

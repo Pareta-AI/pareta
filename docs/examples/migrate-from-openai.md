@@ -1,13 +1,13 @@
 # Migrating from the OpenAI SDK
 
-Pareta inference is OpenAI-compatible. If you already call `chat.completions.create(...)` through the `openai` SDK, you do not have to rewrite that code to run on Pareta. Point the OpenAI client at your Pareta base URL with a `pareta_sk_` key and your existing inference keeps working against a Pareta endpoint.
+Pareta inference is OpenAI-compatible. If you already call `chat.completions.create(...)` through the `openai` SDK, you do not have to rewrite that code to run on Pareta. Point the OpenAI client at your Pareta base URL with a `pareta_sk_` key, set `model="auto"`, and your existing inference keeps working — with Pareta planning each request, routing it to benchmark-proven open specialists, and falling back to a frontier model when that's the right call.
 
 This page covers two things:
 
-1. **Keep using `openai` for inference**, the smallest possible diff: change `base_url` and `api_key`, pass an endpoint id as `model`.
-2. **Switch to the `pareta` SDK** for the things OpenAI does not do: deploying endpoints, evaluating models against frontier baselines on your own data, and discovering tasks.
+1. **Keep using `openai` for inference**, the smallest possible diff: change `base_url`, `api_key`, and `model="auto"`. No deploy step, nothing to provision.
+2. **Switch to the `pareta` SDK** for the things OpenAI does not do: evaluating `"auto"` and open models against frontier baselines on your own data, reading your auto metrics, discovering tasks, and deploying dedicated endpoints when you want to pin one model.
 
-The mental model: OpenAI gives you one client for one purpose (inference). Pareta splits that into a data plane (inference, which is OpenAI-compatible) and a control plane (deploy / eval / discover, which is Pareta-native). You migrate the data plane by changing two strings; you adopt the control plane when you want it.
+The mental model: OpenAI gives you one client for one purpose (inference against a model you name). Pareta splits that into a data plane (inference, OpenAI-compatible, where `"auto"` names the routing brain rather than a fixed model) and a control plane (eval / discover / deploy, which is Pareta-native). You migrate the data plane by changing three strings; you adopt the control plane when you want it.
 
 ## The one-diff migration
 
@@ -51,7 +51,7 @@ client = OpenAI(
     base_url="https://api.pareta.ai/v1",     # note the /v1 suffix
 )
 resp = client.chat.completions.create(
-    model="ep_contract_kie",                 # a Pareta endpoint id, not "gpt-4o-mini"
+    model="auto",                            # the routing brain, not "gpt-4o-mini"
     messages=[{"role": "user", "content": "Extract the invoice total: ..."}],
 )
 print(resp.choices[0].message.content)
@@ -67,7 +67,7 @@ const client = new OpenAI({
   baseURL: "https://api.pareta.ai/v1",     // note the /v1 suffix
 });
 const resp = await client.chat.completions.create({
-  model: "ep_contract_kie",                // a Pareta endpoint id, not "gpt-4o-mini"
+  model: "auto",                           // the routing brain, not "gpt-4o-mini"
   messages: [{ role: "user", content: "Extract the invoice total: ..." }],
 });
 console.log(resp.choices[0].message.content);
@@ -77,7 +77,7 @@ Three things changed, nothing else:
 
 - **`api_key`** is a `pareta_sk_...` key (mint it in the dashboard; key management is browser-only). It rides in the same `Authorization: Bearer` header the OpenAI client already sends.
 - **`base_url`** is `https://api.pareta.ai/v1`. The OpenAI client appends `/chat/completions` to whatever base URL you give it, and Pareta serves the route at `/v1/chat/completions`, so the base URL must include the `/v1` suffix.
-- **`model`** is a Pareta endpoint id (for example `ep_contract_kie`), the value you get back from `endpoints.deploy(...).id`. It is not an OpenAI model name. See [Deploy a model and call it](./deploy-and-infer.md) for how to get one.
+- **`model`** is the literal string `"auto"` — Pareta's routing brain. There is nothing to deploy or provision first. (To pin one specific open model on dedicated capacity instead, pass an endpoint id from `endpoints.deploy(...).id` — see [Deploy a model and call it](./deploy-and-infer.md).)
 
 Streaming, `temperature`, `max_tokens`, `top_p`, `stop`, system messages, and the response shape (`resp.choices[0].message.content`, `resp.usage`) all behave exactly as they do against OpenAI, because the wire format is the same. Your existing response-parsing code does not change.
 
@@ -127,7 +127,7 @@ The Python client is a context manager, which releases the HTTP connection clean
 ```python
 with Pareta.from_env() as pa:
     resp = pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Hello"}],
     )
     print(resp.choices[0].message.content)
@@ -140,7 +140,7 @@ with Pareta.from_env() as pa:
 // the client and await the call.
 const pa = Pareta.fromEnv();
 const resp = await pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "Hello" }],
 });
 console.log(resp.choices[0].message.content);
@@ -163,7 +163,7 @@ resp = openai_client.chat.completions.create(
 
 # Pareta:
 resp = pa.chat.completions.create(
-    model="ep_contract_kie",   # endpoint id instead of a vendor model name
+    model="auto",              # the routing brain instead of a vendor model name
     messages=[{"role": "user", "content": "..."}],
     temperature=0,             # extra OpenAI params pass straight through
     max_tokens=512,
@@ -188,7 +188,7 @@ const resp = await openaiClient.chat.completions.create({
 
 // Pareta:
 const resp = await pa.chat.completions.create({
-  model: "ep_contract_kie",   // endpoint id instead of a vendor model name
+  model: "auto",              // the routing brain instead of a vendor model name
   messages: [{ role: "user", content: "..." }],
   temperature: 0,             // extra OpenAI params pass straight through
   max_tokens: 512,
@@ -208,7 +208,7 @@ Streaming is the same shape as OpenAI too. `stream=True` returns an iterator of 
 
 ```python
 for chunk in pa.chat.completions.create(
-    model="ep_contract_kie",
+    model="auto",
     messages=[{"role": "user", "content": "Summarize this clause: ..."}],
     stream=True,
 ):
@@ -222,7 +222,7 @@ print()
 
 ```typescript
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "Summarize this clause: ..." }],
   stream: true,
 });
@@ -313,7 +313,7 @@ from pareta import InsufficientCreditsError
 
 try:
     resp = pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "..."}],
     )
 except InsufficientCreditsError:
@@ -327,7 +327,7 @@ import { Pareta, InsufficientCreditsError } from "pareta";
 
 try {
   const resp = await pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "..." }],
   });
 } catch (e) {
@@ -486,14 +486,14 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         resp = await pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the total: ..."}],
         )
         print(resp.choices[0].message.content)
 
         # Streaming: await create() once to get the async iterator, then `async for`.
         stream = await pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Summarize: ..."}],
             stream=True,
         )
@@ -516,14 +516,14 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();
 
 const resp = await pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "Extract the total: ..." }],
 });
 console.log(resp.choices[0].message.content);
 
 // Streaming: create({ stream: true }) returns the async iterator directly.
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "Summarize: ..." }],
   stream: true,
 });
@@ -538,11 +538,12 @@ This is the same async shape the `openai` SDK uses (`AsyncOpenAI`, `await create
 ## Migration checklist
 
 - [ ] Mint a `pareta_sk_` key in the dashboard.
-- [ ] Deploy an endpoint for your task and grab `endpoint.id`, see [Deploy a model and call it](./deploy-and-infer.md).
-- [ ] **Staying on `openai`?** Set `base_url="https://api.pareta.ai/v1"`, `api_key="pareta_sk_..."`, and `model=<endpoint id>`. Done.
+- [ ] **Staying on `openai`?** Set `base_url="https://api.pareta.ai/v1"`, `api_key="pareta_sk_..."`, and `model="auto"`. Done — nothing to deploy.
 - [ ] **Adopting `pareta`?** Swap `OpenAI(...)` for `Pareta.from_env()` and `client.chat...` for `pa.chat...`. Inference args and response shapes are unchanged.
+- [ ] Benchmark it: run your own data through `pa.evals` with `models=["auto"]` and a frontier baseline before you commit.
 - [ ] Map your error handling: 402 becomes `InsufficientCreditsError`, 503 becomes `EndpointNotReadyError`.
 - [ ] Keep your org balance funded (top-up is browser-only); a zero balance stops both inference and evals.
+- [ ] (Optional) Pin a dedicated endpoint for a fixed-model workload — see [Deploy a model and call it](./deploy-and-infer.md).
 
 ## Next steps
 

@@ -7,9 +7,11 @@ of text on `chunk.choices[0].delta.content`. Use this for chat UIs, agent
 loops, long generations, and anywhere a first-token-fast experience matters.
 
 Inference on Pareta is OpenAI-compatible, so the streaming shape here is the
-same vLLM-style data-only SSE the `openai` SDK consumes. The model id you pass
-is an endpoint id from [deploying an endpoint](../guide/deploying-endpoints.md), and
-streamed inference is metered against your org balance exactly like a
+same vLLM-style data-only SSE the `openai` SDK consumes. Use `model="auto"` —
+the routing brain streams progress while it plans and executes, then the
+answer tokens. (A dedicated endpoint id from
+[deploying an endpoint](../guide/deploying-endpoints.md) streams the same way.)
+Streamed inference is metered against your org balance exactly like a
 non-streaming call.
 
 ## Quickstart
@@ -22,7 +24,7 @@ from pareta import Pareta
 pa = Pareta.from_env()  # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 stream = pa.chat.completions.create(
-    model="ep_contract_kie",  # an endpoint id from endpoints.deploy(...)
+    model="auto",             # the routing brain (or a dedicated endpoint id)
     messages=[{"role": "user", "content": "Write a haiku about throughput."}],
     stream=True,
 )
@@ -42,7 +44,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv(); // reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie", // an endpoint id from endpoints.deploy(...)
+  model: "auto",            // the routing brain (or a dedicated endpoint id)
   messages: [{ role: "user", content: "Write a haiku about throughput." }],
   stream: true,
 });
@@ -106,7 +108,7 @@ from pareta import Pareta
 pa = Pareta.from_env()
 
 chunks = pa.chat.completions.create(
-    model="ep_contract_kie",
+    model="auto",
     messages=[
         {"role": "system", "content": "You are concise."},
         {"role": "user", "content": "Summarize what an invoice number is."},
@@ -138,7 +140,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();
 
 const chunks = pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [
     { role: "system", content: "You are concise." },
     { role: "user", content: "Summarize what an invoice number is." },
@@ -184,7 +186,7 @@ the only model selector here is the endpoint id you pass to `model`.
 
 ```python
 stream = pa.chat.completions.create(
-    model="ep_contract_kie",
+    model="auto",
     messages=[{"role": "user", "content": "List three GPU-free wins."}],
     stream=True,
     top_p=0.9,
@@ -196,7 +198,7 @@ stream = pa.chat.completions.create(
 
 ```typescript
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "List three GPU-free wins." }],
   stream: true,
   top_p: 0.9,
@@ -219,7 +221,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         stream = await pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Stream me a limerick."}],
             stream=True,
         )
@@ -244,7 +246,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();
 
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie",
+  model: "auto",
   messages: [{ role: "user", content: "Stream me a limerick." }],
   stream: true,
 });
@@ -279,7 +281,7 @@ pa = Pareta.from_env()
 
 try:
     stream = pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Hello"}],
         stream=True,
     )
@@ -303,7 +305,7 @@ const pa = Pareta.fromEnv();
 
 try {
   const stream = pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "Hello" }],
     stream: true,
   });

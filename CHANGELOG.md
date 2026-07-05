@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.1 — 2026-07-05
+
+- **Auto-first docs everywhere**: the README (PyPI/GitHub landing) now leads
+  with `model="auto"`; migrating from OpenAI is the three-string change
+  (base_url, api_key, `model="auto"`) with no deploy step; the streaming
+  example, chat reference, and package docstrings lead with auto; the
+  document-extraction walkthrough calls out the zero-setup auto path;
+  `llms.txt` regenerated with the auto-first preamble.
+- Fixed the `pyproject.toml` / `_version.py` version drift (0.2.1 vs 0.3.0).
+
+## 0.3.0 — 2026-07-03
+
+- **`model="auto"` is the product**: the quickstart, inference guide, CLI and
+  MCP server now lead with the routing brain. `pareta chat` defaults to
+  `--model auto`.
+- New `client.auto` resource: `metrics()` (org rollup incl. projected savings
+  vs frontier) and `compare_frontier()` (metered side-by-side against
+  gpt-5.5 / gemini / claude).
+- New CLI group: `pareta auto metrics`, `pareta auto compare`.
+- MCP: `chat` defaults to auto; new `auto_metrics` + `compare_frontier` tools;
+  `run_eval` documents `"auto"` as a benchmark contender.
+- BREAKING (CLI): `pareta chat MODEL PROMPT` → `pareta chat PROMPT
+  [--model MODEL]` (default `auto`).
+
 All notable changes to the `pareta` Python SDK. This project adheres to
 [Semantic Versioning](https://semver.org).
 

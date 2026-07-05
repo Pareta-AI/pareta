@@ -148,8 +148,8 @@ class Pareta(_BaseClient):
     """Synchronous Pareta client.
 
     >>> pa = Pareta(api_key="pareta_sk_…")          # or Pareta.from_env()
-    >>> pa.models.list()
-    >>> pa.chat.completions.create(model="ep_…", messages=[...])
+    >>> pa.chat.completions.create(model="auto", messages=[...])
+    >>> pa.models.list()                            # dedicated endpoints, if any
     """
 
     def __init__(
@@ -171,6 +171,7 @@ class Pareta(_BaseClient):
         from .resources.tasks import Tasks
         from .resources.evals import Evals
         from .resources.audio import Audio
+        from .resources.auto import Auto
 
         self.chat = Chat(self)
         self.models = Models(self)
@@ -178,6 +179,7 @@ class Pareta(_BaseClient):
         self.tasks = Tasks(self)
         self.evals = Evals(self)
         self.audio = Audio(self)
+        self.auto = Auto(self)
 
     # ── lifecycle ─────────────────────────────────────────────────────
     @classmethod
@@ -285,6 +287,7 @@ class AsyncPareta(_BaseClient):
         from .resources.tasks import AsyncTasks
         from .resources.evals import AsyncEvals
         from .resources.audio import AsyncAudio
+        from .resources.auto import AsyncAuto
 
         self.chat = AsyncChat(self)
         self.models = AsyncModels(self)
@@ -292,6 +295,7 @@ class AsyncPareta(_BaseClient):
         self.tasks = AsyncTasks(self)
         self.evals = AsyncEvals(self)
         self.audio = AsyncAudio(self)
+        self.auto = AsyncAuto(self)
 
     @classmethod
     def from_env(cls, **kwargs) -> "AsyncPareta":

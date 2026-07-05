@@ -190,7 +190,9 @@ def test_run_create_then_wait_polls_to_terminal():
                     "candidate_model_ids": ["qwen-1", "claude-opus-4-7"],
                     "total_cost_micro_usd": 1_234_567},
             "results": [
-                {"model_id": "qwen-1", "kind": "open", "quality_mean": 0.91, "n_succeeded": 5, "error_count": 0},
+                {"model_id": "qwen-1", "kind": "open", "quality_mean": 0.91, "n_succeeded": 5, "error_count": 0,
+                 "per_item": [{"idx": 0, "score": 0.0, "prediction": "the model said this"},
+                              {"idx": 1, "score": 1.0, "prediction": "ok"}]},
             ],
         })
 
@@ -204,6 +206,10 @@ def test_run_create_then_wait_polls_to_terminal():
     assert run.cost == Decimal("1.23")
     assert run.cost_micro_usd == 1_234_567
     assert run.results[0].model_id == "qwen-1" and run.results[0].quality_mean == 0.91
+    # per_item carries the raw prediction so a 0.0 score is debuggable
+    items = run.results[0].per_item
+    assert items[0].idx == 0 and items[0].score == 0.0
+    assert items[0].prediction == "the model said this"
 
 
 def test_run_create_from_items_autocreates_set():

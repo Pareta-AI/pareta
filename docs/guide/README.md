@@ -2,12 +2,12 @@
 
 A start-to-finish path through the Pareta SDK, from your first install to running it async in production. Read it in order the first time; come back to any page on its own later.
 
-The throughline: you deploy open-weights models as endpoints (Pareta hides the GPU), call them with OpenAI-compatible inference, and prove a cheaper open model wins on your data before you commit. Inference and evals are metered against your org balance; model ids are per-task aliases.
+The throughline: you send every request to `model="auto"` (Pareta plans, routes to benchmark-proven open specialists, verifies, and falls back to a frontier model when needed), and you prove it wins on your data with an eval before you commit. Dedicated endpoints exist for pinning one model. Inference and evals are metered against your org balance; model ids are per-task aliases.
 
 Almost every example builds the client with `Pareta.from_env()`, which reads `PARETA_API_KEY` and an optional `PARETA_BASE_URL`.
 
 1. [Installation & authentication](./installation.md) — install `pareta` (pip/uv/poetry), authenticate with a `pareta_sk_` key via `Pareta.from_env()` or `api_key=`, and make a first metered OpenAI-compatible call.
-2. [Quickstart](./quickstart.md) — deploy the recommended model for a task and run inference end to end in about a dozen lines, with streaming, metering, async, and cleanup.
+2. [Quickstart](./quickstart.md) — `model="auto"` end to end in about a dozen lines, with streaming, metering, and benchmarking it against frontier models on your data.
 3. [Core concepts](./core-concepts.md) — tasks, open vs frontier models, per-task aliases, hidden hardware, balance metering, and the match to leaderboard to eval to deploy funnel.
 4. [Running inference](./inference.md) — call deployed endpoints with `chat.completions.create`: completions, streaming chunks, passthrough params, `models.list`, async, metering errors, and pointing the `openai` SDK at `base_url`.
 5. [Deploying & operating endpoints](./deploying-endpoints.md) — the control plane: `deploy` (`wait=True` Endpoint vs `wait=False` progress-event stream), `list`/`retrieve`/`start`/`stop`/`delete`, and `metrics(id)`. No GPU knob.

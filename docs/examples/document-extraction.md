@@ -2,6 +2,8 @@
 
 Pull structured fields out of PDFs and scanned images, then serve the model that does it best for the least money.
 
+> **Zero-setup path:** `model="auto"` already routes document requests to Pareta's benchmark-proven extraction specialists — nothing to deploy, and it runs as a first-class contender in the eval below (`models=["auto"]`). This page is the *full* loop for when you want to pick and pin a specific open model yourself.
+
 This page walks the full loop for a document task end to end:
 
 1. Find the blob task and check what it expects.

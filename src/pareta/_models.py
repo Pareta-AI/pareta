@@ -418,6 +418,29 @@ def _eval_set_list(raw) -> list[EvalSet]:
     return [EvalSet(e) for e in ((raw or {}).get("eval_sets") or [])]
 
 
+class EvalItemResult(_Base):
+    """One scored item inside `EvalResult.per_item`. `prediction` is the model's
+    raw output, truncated server-side — present only on items that reached
+    scoring (not pool/build errors), there to debug a 0.0 `score` without
+    re-running the eval."""
+
+    @property
+    def idx(self) -> int | None:
+        return self._raw.get("idx")
+
+    @property
+    def score(self) -> float | None:
+        return self._raw.get("score")
+
+    @property
+    def prediction(self) -> str | None:
+        return self._raw.get("prediction")
+
+    @property
+    def error(self) -> str | None:
+        return self._raw.get("error")
+
+
 class EvalResult(_Base):
     """One model's aggregate on an eval run. `model_id` is the per-task public
     alias; `kind` ('open' | 'frontier') is populated once Slice 4 formalizes the
@@ -454,6 +477,12 @@ class EvalResult(_Base):
     @property
     def error_count(self) -> int | None:
         return self._raw.get("error_count")
+
+    @property
+    def per_item(self) -> list[EvalItemResult]:
+        """Per-item rows (idx/score/prediction/error). Populated for runs that
+        persist them; empty list otherwise."""
+        return [EvalItemResult(it) for it in (self._raw.get("per_item") or [])]
 
 
 class LeaderboardEntry(_Base):

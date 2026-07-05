@@ -1,9 +1,35 @@
 # Quickstart
 
-Deploy the recommended open-weights model for a task and run inference against
-it, end to end, in about a dozen lines. Pareta picks the GPU and serving config
-for you, so there is no hardware to choose. Inference is OpenAI-compatible and
-metered against your org's balance.
+Pareta is one endpoint. Send any request with `model="auto"` and Pareta plans
+it, routes each part to the cheapest model that holds frontier-grade quality,
+verifies, and answers — billed as one request, with a frontier model as the
+built-in quality floor. Inference is OpenAI-compatible and metered against
+your org's balance.
+
+## The 30-second version
+
+```python
+from pareta import Pareta
+
+client = Pareta.from_env()          # reads PARETA_API_KEY
+completion = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Summarize this contract: …"}],
+)
+print(completion.choices[0].message.content)
+```
+
+That is the product. Everything below — benchmarking auto against frontier
+models on your own data, monitoring spend + projected savings, and (for power
+users) deploying individual open-weights endpoints — exists to prove and
+operate that one call.
+
+- **Prove it**: `client.evals` with `"auto"` among the candidates (see
+  [Evaluation](evaluation.md)) — per-contender quality + cost on YOUR data.
+- **Watch it**: `client.auto.metrics()` — requests, success rate, spend, and
+  the projected savings vs frontier.
+- **Compare it**: `client.auto.compare_frontier(...)` — one prompt against a
+  frontier vendor, metered, for a side-by-side.
 
 ## Install
 

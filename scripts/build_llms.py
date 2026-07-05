@@ -56,10 +56,13 @@ LANGUAGES: list[Language] = [
 # General, language-neutral product summary (the blockquote at the top of both
 # files). Anything language-specific lives in LANGUAGES, surfaced by _sdk_blurb.
 INTRO = (
-    "Pareta is a marketplace + control plane for open-weights models. Its SDKs "
-    "let you deploy task-specific open-weights endpoints (Pareta picks the GPU), "
-    "run metered OpenAI-compatible inference, browse a per-task benchmark "
-    "catalog, and evaluate models on your own data — then deploy the winner. "
+    'Pareta is one OpenAI-compatible endpoint with one model id: `"auto"`. '
+    "Each request is planned, routed to benchmark-proven open specialists, "
+    "verified, and falls back to a frontier model when that's the right call — "
+    "one request, one bill. Its SDKs also let you benchmark `\"auto\"` against "
+    "frontier models on your own data, read your auto traffic metrics, browse "
+    "the per-task benchmark catalog, and deploy dedicated open-weights "
+    "endpoints when you want to pin one model (Pareta picks the GPU). "
     "Authenticate with a `pareta_sk_` key from the dashboard or the "
     "`PARETA_API_KEY` environment variable."
 )

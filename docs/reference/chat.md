@@ -29,7 +29,7 @@ All arguments are keyword-only.
 
 | Parameter | Type | Default | Notes |
 |-----------|------|---------|-------|
-| `model` | `str` | required | An endpoint id from [`endpoints.deploy(...)`](./endpoints.md), an id from [`models.list()`](./models.md), or a per-task alias. Validated server-side at call time. |
+| `model` | `str` | required | `"auto"` (the routing brain — the recommended default), an endpoint id from [`endpoints.deploy(...)`](./endpoints.md), an id from [`models.list()`](./models.md), or a per-task alias. Validated server-side at call time. |
 | `messages` | `list[dict]` | required | Non-empty list of OpenAI-format message dicts (`{"role": ..., "content": ...}`). |
 | `stream` | `bool` | `False` | `False` returns a `ChatCompletion`; `True` returns an iterator of `ChatCompletionChunk`. |
 | `**kwargs` | `Any` | — | Any extra OpenAI body field (`temperature`, `max_tokens`, `top_p`, `stop`, `seed`, ...) passes through unchanged. |
@@ -43,7 +43,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
     resp = pa.chat.completions.create(
-        model="ep_invoice_xtract",   # an endpoint id from endpoints.deploy()
+        model="auto",                # the routing brain (or a dedicated endpoint id)
         messages=[
             {"role": "system", "content": "You extract structured fields from documents."},
             {"role": "user", "content": "What is the invoice total?\n\nINVOICE\nTotal due: $4,210.00"},
@@ -58,8 +58,11 @@ with Pareta.from_env() as pa:   # reads PARETA_API_KEY (+ optional PARETA_BASE_U
 
 ### Where `model` comes from
 
-Three interchangeable sources:
+Four interchangeable sources:
 
+- **`"auto"` — the routing brain, the recommended default.** Pareta plans the
+  request, routes it to benchmark-proven open specialists, verifies, and falls
+  back to a frontier model when that's the right call. Nothing to deploy.
 - An endpoint id you deployed. See [`endpoints.deploy`](./endpoints.md).
 - Any id returned by [`models.list()`](./models.md) (your deployed, callable endpoints).
 - A per-task model alias. The deployable recommended pick for a task is `pa.tasks.recommended(task_id)`; see [`tasks`](./tasks.md).
@@ -90,7 +93,7 @@ Any extra keyword goes straight into the request body, so the full OpenAI parame
 
 ```python
 resp = pa.chat.completions.create(
-    model="ep_invoice_xtract",
+    model="auto",
     messages=[{"role": "user", "content": "Summarize this contract clause: ..."}],
     temperature=0.2,
     max_tokens=512,
@@ -109,7 +112,7 @@ Set `stream=True` and `create(...)` returns an `Iterator[ChatCompletionChunk]` i
 ```python
 with Pareta.from_env() as pa:
     stream = pa.chat.completions.create(
-        model="ep_invoice_xtract",
+        model="auto",
         messages=[{"role": "user", "content": "Draft a one-paragraph status update."}],
         stream=True,
     )
@@ -150,14 +153,14 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         # Non-streaming: await returns a ChatCompletion
         resp = await pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "What is the invoice total?"}],
         )
         print(resp.choices[0].message.content)
 
         # Streaming: await once, then async-for the chunks
         stream = await pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "Stream me a haiku about ledgers."}],
             stream=True,
         )
@@ -188,7 +191,7 @@ from pareta import (
 with Pareta.from_env() as pa:
     try:
         resp = pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "Hello"}],
         )
         print(resp.choices[0].message.content)
@@ -230,7 +233,7 @@ from openai import OpenAI
 client = OpenAI(api_key="pareta_sk_...", base_url="https://api.pareta.ai/v1")
 
 resp = client.chat.completions.create(
-    model="ep_invoice_xtract",
+    model="auto",
     messages=[{"role": "user", "content": "What is the invoice total?"}],
 )
 print(resp.choices[0].message.content)

@@ -10,6 +10,27 @@ The shape is always the same:
 2. Kick off an **eval run** over a list of models (`evals.runs.create`), optionally waiting for it to finish.
 3. Read `run.results` to compare quality and cost; read `run.cost` for the bill.
 
+## Benchmark Pareta itself: `"auto"` as a contender
+
+Include the literal string `"auto"` among the candidate models and the eval
+runs Pareta's routing brain against every item — same inputs as every other
+contender, scored by the same scorer. The per-contender result rows
+(quality mean + CI, mean cost per item) are the product's core claim,
+measured on your data:
+
+```python
+run = client.evals.runs.create(
+    eval_set=my_set,
+    candidates=["auto", "gpt-5.5"],   # Pareta MoM vs the frontier
+)
+```
+
+A completed run's rows let you read the verdict directly: overlapping
+quality CIs at lower cost = frontier-grade; higher mean without overlap =
+ahead. Auto's failures count as errors (not skips) — availability is part of
+what a benchmark should measure.
+
+
 ## A complete run, top to bottom
 
 **Python**
@@ -407,6 +428,7 @@ Each `EvalResult` has:
 - `quality_mean`, `quality_ci_low`, `quality_ci_high` — mean score in `[0, 1]` with a 95% confidence interval. Use the interval: two models whose CIs overlap are not meaningfully different on this sample, so add rows before declaring a winner.
 - `mean_cost_micro_usd` — average cost per item in **micro-USD** (1,000,000 = $1.00). This stays in micro-USD on purpose: flooring sub-cent unit rates to whole cents would erase the open-vs-frontier cost gap that the whole exercise is about.
 - `n_succeeded`, `error_count` — how many items scored vs. errored for that model.
+- `per_item` — the per-item rows, each an `EvalItemResult` with `idx`, `score`, `error`, and `prediction` (the model's raw output, truncated). Reach for `prediction` when a `score` is surprisingly low — it's the model's actual answer, so you can see *why* it lost points without re-running the eval.
 
 ### What the run cost
 

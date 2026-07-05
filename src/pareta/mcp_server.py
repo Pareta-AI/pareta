@@ -239,6 +239,11 @@ def run_eval(
     your org balance for the compute. With `wait=True` (default) this blocks
     until the run finishes and returns the results + billed cost; `wait=False`
     returns immediately with the run id to poll via `get_eval_run`.
+    
+
+    TIP: include "auto" in the candidate models to benchmark Pareta's
+    routing brain itself against frontier models on this data — the
+    cost-quality result is the product's core claim, measured on YOUR data.
     """
     run = _client().evals.runs.create(
         eval_set=eval_set,
@@ -263,13 +268,17 @@ def get_eval_run(run_id: str) -> dict[str, Any]:
 # ── inference ──────────────────────────────────────────────────────────────
 @mcp.tool()
 @_guard
-def chat(model: str, prompt: str) -> dict[str, Any]:
-    """Send a single-turn prompt to a deployed model and return the assistant's
-    text reply (non-streaming).
+def chat(prompt: str, model: str = "auto") -> dict[str, Any]:
+    """Send a single-turn prompt to Pareta and return the assistant's text
+    reply (non-streaming).
 
-    `model` is an endpoint id from `deploy_endpoint` / `list_models` (or any
-    model id your org can reach). METERED: a successful completion debits your
-    org balance. Returns `{"text": …, "model": …, "usage": …}`.
+    The DEFAULT `model="auto"` is Pareta's routing brain — it plans the
+    request, routes each part to the cheapest model that holds frontier-grade
+    quality, verifies, and answers. This is the recommended way to call
+    Pareta. Pass a specific endpoint id (from `deploy_endpoint` /
+    `list_models`) only when you deliberately want one model. METERED: a
+    successful completion debits the org balance (a failed one bills $0).
+    Returns `{"text": …, "model": …, "usage": …}`.
     """
     completion = _client().chat.completions.create(
         model=model, messages=[{"role": "user", "content": prompt}]
@@ -277,6 +286,28 @@ def chat(model: str, prompt: str) -> dict[str, Any]:
     choices = completion.choices
     text = choices[0].message.content if choices else None
     return {"text": text, "model": completion.model, "usage": completion.usage.to_dict()}
+
+
+@mcp.tool()
+@_guard
+def auto_metrics() -> dict[str, Any]:
+    """The org's `model="auto"` traffic, rolled up: requests + success rate
+    (30d), spend, hourly p50/p95/error buckets (7d), daily success cells, and
+    the PROJECTED savings vs frontier (labeled projected until dual-run
+    calibration). Read-only, free."""
+    return _client().auto.metrics()
+
+
+@mcp.tool()
+@_guard
+def compare_frontier(prompt: str, model: str = "gpt-5.5") -> dict[str, Any]:
+    """Run one prompt against a frontier vendor for a side-by-side with
+    `chat` (model="auto"). Allowed: gpt-5.5, gemini-3-5-flash,
+    gemini-3-1-pro, claude-sonnet-4-6. METERED at the vendor's actual token
+    cost (a failed vendor call bills $0). Returns
+    `{"model", "content", "cost_micro_usd", "latency_ms"}`."""
+    return _client().auto.compare_frontier(
+        model=model, messages=[{"role": "user", "content": prompt}])
 
 
 # ── audio ──────────────────────────────────────────────────────────────────

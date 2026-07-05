@@ -1,15 +1,18 @@
 """Pareta — Python client.
 
-Deploy open-weights endpoints, run metered inference, browse the benchmark
-catalog, and eval models on your own data.
+One model id — ``"auto"`` — and Pareta plans each request, routes it to
+benchmark-proven open specialists, verifies, and falls back to a frontier
+model when that's the right call. One request, one bill.
 
     from pareta import Pareta
     pa = Pareta.from_env()                       # PARETA_API_KEY
-    pa.chat.completions.create(model="ep_…", messages=[{"role": "user", "content": "hi"}])
+    pa.chat.completions.create(model="auto", messages=[{"role": "user", "content": "hi"}])
 
 Inference is OpenAI-compatible, so you can equally point the `openai` SDK at
-`base_url` + your `pareta_sk_` key. The SDK's unique value is the control plane
-(deploy / eval / discovery), landing slice by slice (see SDK_PLAN.md).
+`base_url` + your `pareta_sk_` key with ``model="auto"``. The SDK's unique
+value is everything around that call: evals on your own data (with "auto" as
+a first-class contender), auto metrics, discovery, and the dedicated-endpoint
+control plane.
 """
 
 from ._client import Pareta, AsyncPareta
@@ -46,6 +49,7 @@ from ._models import (
     EvalSet,
     EvalRun,
     EvalResult,
+    EvalItemResult,
     Leaderboard,
     LeaderboardEntry,
     FrontierModel,
@@ -86,6 +90,7 @@ __all__ = [
     "EvalSet",
     "EvalRun",
     "EvalResult",
+    "EvalItemResult",
     "Leaderboard",
     "LeaderboardEntry",
     "FrontierModel",

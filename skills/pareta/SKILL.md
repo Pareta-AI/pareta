@@ -1,20 +1,33 @@
 ---
 name: pareta
 description: >-
-  Deploy, benchmark, and call open-weights model endpoints on Pareta using the
-  `pareta` CLI. Use when the user wants to find the best open model for a task,
-  deploy an open-weights endpoint (Pareta picks the GPU), run inference against
-  it, replace a frontier vendor API with a cheaper open one, or benchmark models
-  on their own data. Drives the `pareta` shell command; auth is the
+  Call Pareta's model:"auto" routing brain (one endpoint that routes every
+  request to the best model at frontier-grade quality for a fraction of the
+  cost), benchmark it against frontier models on the user's own data, monitor
+  spend/quality/savings, and — for power users — deploy and drive individual
+  open-weights endpoints. Drives the `pareta` shell command; auth is the
   `PARETA_API_KEY` env var.
 ---
 
 # Pareta
 
-[Pareta](https://pareta.ai) is a marketplace + control plane for open-weights
-models: you match a task to a model, deploy it as an OpenAI-compatible endpoint
-(Pareta picks the GPU — there is no hardware knob), run metered inference, and
-benchmark candidates on your own data. This skill drives the `pareta` CLI.
+[Pareta](https://pareta.ai) is ONE endpoint: send any request with
+`model: "auto"` and Pareta plans it, routes each part to the cheapest model
+that holds frontier-grade quality, verifies, and answers — billed as one
+request, with the frontier as the built-in quality floor (a request that
+can't complete degrades to a frontier model; a failed request bills $0).
+
+The default workflow is therefore simple:
+1. **Call it** — `pareta chat --model auto "…"` (or any OpenAI-compatible
+   client pointed at api.pareta.ai with `model: "auto"`).
+2. **Prove it** — benchmark auto against frontier models on the USER'S data:
+   `pareta evals run` with `"auto"` among the candidates. The report gives
+   per-contender quality + cost — the product's core claim, measured.
+3. **Watch it** — `pareta --json auto metrics` (requests, success rate,
+   spend, PROJECTED savings vs frontier).
+
+Individual open-weights endpoints (match a task → deploy → call) remain
+available as the power-user path; auto is the product.
 
 ## Before you start
 
