@@ -8870,6 +8870,16 @@ from pareta import Pareta
 pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 ```
 
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const t = await pa.audio.transcriptions("clip.wav", { language: "en" });
+t.text;                                              // the transcript
+const s = await pa.audio.speech("hello there");
+await s.save("out.wav");                             // decoded bytes (Node)
+```
+
 ---
 
 ## audio.transcriptions
