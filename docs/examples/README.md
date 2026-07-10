@@ -2,6 +2,18 @@
 
 Complete, runnable workflows for real jobs, in **Python and TypeScript**. Each page is self-contained and uses the real SDK surface end to end (`Pareta.from_env()` / `Pareta.fromEnv()`): call `model="auto"` with OpenAI-compatible inference, benchmark it on your data, and read the metered cost in dollars off `run.cost`. Grouped by what you are trying to do.
 
+## Use-case recipes
+
+Straight-up inference, one page per workload. Every recipe is the same shape — send your data to the interface that matches it (`model="auto"` for messages, dedicated routes for ranked lists, vectors, and audio) — and each section links to a full runnable program in [Pareta-AI/examples](https://github.com/Pareta-AI/examples).
+
+- [Medical coding (ICD-10)](./icd-coding.md) — a clinical discharge summary in, ICD-10-CM codes as strict JSON out.
+- [Retrieval: reranking and embeddings](./retrieval.md) — the RAG stack: calibrated reranking, embedding-based semantic search, and the two-stage recall→precision pipeline.
+- [Extraction: documents and contracts](./extraction.md) — pull JSON fields out of invoice images and PDFs (how to attach them to the prompt) and out of contract text.
+- [Text classification](./text-classification.md) — intent classification with a closed label set + few-shot, and hate-speech content moderation.
+- [Summarization](./summarization.md) — meeting notes to an executive summary and action items, with a streaming variant.
+- [Text to speech](./text-to-speech.md) — synthesize spoken audio and save it to a file.
+- [Speech to text](./speech-to-text.md) — transcribe an audio clip from a path, raw bytes, or base64.
+
 ## Prove it on your own data
 
 You have a job in plain English, or your own data, and want proof that `"auto"` wins on it.
@@ -32,3 +44,4 @@ Already on the OpenAI SDK.
 
 - Concepts and step-by-step explanation: [Guide](../guide/README.md).
 - Field-by-field API docs: [Reference](../reference/README.md).
+- Full runnable programs for every recipe: [Pareta-AI/examples](https://github.com/Pareta-AI/examples).

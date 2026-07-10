@@ -481,6 +481,117 @@ def chat(
     _out.print(content or "")
 
 
+# ── retrieval (rerank + embed) ───────────────────────────────────────────
+def _read_lines(path: str) -> list[str]:
+    """Read a text file into non-blank lines (one document/text per line)."""
+    from pathlib import Path
+
+    lines = [ln for ln in Path(path).read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if not lines:
+        raise ValueError(f"{path}: no lines found")
+    return lines
+
+
+def _texts_from(positional: Optional[list[str]], file: Optional[str], what: str) -> list[str]:
+    """Exactly one source: positional args OR --file."""
+    if positional and file:
+        raise ValueError(f"pass {what} as arguments OR --file, not both")
+    if not positional and not file:
+        raise ValueError(f"no {what} given (pass them as arguments or via --file)")
+    return _read_lines(file) if file else list(positional or [])
+
+
+def _snippet(text: str, width: int = 70) -> str:
+    """One-line preview for tables: collapse whitespace, truncate."""
+    text = " ".join(text.split())
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+@app.command("rerank")
+def rerank(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="The query to rank documents against."),
+    documents: Optional[list[str]] = typer.Argument(None, help="Documents to score (or use --file)."),
+    file: Optional[str] = typer.Option(None, "--file", help="File with one document per line."),
+    top_n: Optional[int] = typer.Option(None, "--top-n", help="Return only the N most relevant "
+                                        "(all documents are still scored and metered)."),
+) -> None:
+    """Rank documents by relevance to a query, most relevant first.
+    Metered per document scored."""
+    state = _state(ctx)
+    try:
+        docs = _texts_from(documents, file, "documents")
+        ranked = _client().rerank(query, docs, top_n=top_n)
+    except (ValueError, OSError) as e:
+        _err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=2)
+    except ParetaError as e:
+        raise _fail(e)
+    if state.json:
+        _emit(state, ranked)
+        return
+    table = Table(title="Rerank")
+    table.add_column("rank", justify="right")
+    table.add_column("score", justify="right")
+    table.add_column("index", justify="right")
+    table.add_column("document")
+    for rank, r in enumerate(ranked.results, 1):
+        doc = docs[r.index] if 0 <= r.index < len(docs) else ""
+        table.add_row(str(rank), f"{r.relevance_score:.3f}", str(r.index), _snippet(doc))
+    _out.print(table)
+    scored = ranked.pairs if ranked.pairs is not None else len(docs)
+    _out.print(f"{scored} documents scored (metered per document)")
+
+
+@app.command("embed")
+def embed(
+    ctx: typer.Context,
+    texts: Optional[list[str]] = typer.Argument(None, help="Texts to embed (or use --file)."),
+    file: Optional[str] = typer.Option(None, "--file", help="File with one text per line."),
+    input_type: str = typer.Option("document", "--type", help='Embedding side: "query" or "document".'),
+    out: Optional[str] = typer.Option(None, "--out", help='Write vectors as JSONL rows '
+                                      '{"index": i, "vector": [...]}.'),
+) -> None:
+    """Embed texts into unit-normalized vectors. Vectors are written with
+    --out (JSONL) or dumped with --json — the table shows sizes only.
+    Metered per input token."""
+    state = _state(ctx)
+    if input_type not in ("query", "document"):
+        _err.print('[red]error:[/red] --type must be "query" or "document"')
+        raise typer.Exit(code=2)
+    try:
+        inputs = _texts_from(texts, file, "texts")
+        emb = _client().embeddings(inputs, input_type=input_type)
+    except (ValueError, OSError) as e:
+        _err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=2)
+    except ParetaError as e:
+        raise _fail(e)
+    if out is not None:
+        from pathlib import Path
+
+        try:
+            with Path(out).open("w", encoding="utf-8") as f:
+                for i, vec in enumerate(emb.vectors):
+                    f.write(json.dumps({"index": i, "vector": vec}) + "\n")
+        except OSError as e:
+            _err.print(f"[red]error:[/red] cannot write {out}: {e}")
+            raise typer.Exit(code=2)
+        _err.print(f"[green]wrote[/green] {out}  ({len(emb.vectors)} vectors)")
+    if state.json:
+        _emit(state, emb)
+        return
+    table = Table(title="Embeddings")
+    table.add_column("index", justify="right")
+    table.add_column("chars", justify="right")
+    table.add_column("dim", justify="right")
+    for i, (text, vec) in enumerate(zip(inputs, emb.vectors)):
+        table.add_row(str(i), str(len(text)), str(len(vec)))
+    _out.print(table)
+    _out.print(f"{len(inputs)} texts, {_dash(emb.prompt_tokens)} prompt tokens "
+               "(metered per input token)")
+
+
 # ── audio ────────────────────────────────────────────────────────────────
 audio_app = typer.Typer(no_args_is_help=True, help="Speech — transcribe (ASR) + speak (TTS).")
 app.add_typer(audio_app, name="audio")

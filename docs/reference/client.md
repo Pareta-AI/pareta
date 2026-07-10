@@ -213,12 +213,14 @@ The client is a namespace router. Every capability hangs off it as an attribute.
 |-----------|-----------|------------|--------------|-----------|
 | `chat` | `Chat` | `AsyncChat` | OpenAI-compatible inference via `chat.completions.create(model="auto", ...)`. Metered. | [chat](./chat.md) |
 | `models` | `Models` | `AsyncModels` | `models.list()` — the OpenAI-compatible model listing: exactly one entry, `"auto"`. | [models](./models.md) |
-| `tasks` | `Tasks` | `AsyncTasks` | The benchmark catalog behind auto: `list`, `retrieve`, `match`. | [tasks](./tasks.md) |
+| `tasks` | `Tasks` | `AsyncTasks` | The grading-contract directory for evals: `list`, `retrieve`, `match`. | [tasks](./tasks.md) |
 | `evals` | `Evals` | `AsyncEvals` | `evals.sets`, `evals.runs`, and `evals.frontier_models(...)`. Metered. | [evals](./evals.md) |
 | `audio` | `Audio` | `AsyncAudio` | Speech: `audio.transcriptions(...)` (ASR) and `audio.speech(...)` (TTS). Metered per minute. | [audio](./audio.md) |
+| `rerank` | callable | callable | `pa.rerank(query, documents, top_n=...)` — calibrated document reranking. Metered per document. | [rerank](./rerank.md) |
+| `embeddings` | callable | callable | `pa.embeddings(texts, input_type=...)` — unit-normalized vectors. Metered per input token. | [embeddings](./embeddings.md) |
 | `auto` | `Auto` | `AsyncAuto` | `auto.metrics()` — your org's auto-traffic rollup — and `auto.compare_frontier(...)`, a metered frontier side-by-side. | [quickstart](../guide/quickstart.md) |
 
-The TypeScript client mirrors five of the six — `chat`, `models`, `tasks`, `evals`, `auto` — as camelCase methods on one Promise-only `Pareta`. `audio` is Python-only.
+The TypeScript client mirrors all of them — `chat`, `models`, `tasks`, `evals`, `audio`, `auto` as camelCase namespaces, `rerank`/`embeddings` as the same callable fields — on one Promise-only `Pareta` (full capability parity as of `pareta` 1.2.0 on npm).
 
 A tour of the core namespaces against one client:
 
@@ -226,7 +228,7 @@ A tour of the core namespaces against one client:
 from pareta import Pareta
 
 with Pareta.from_env() as pa:
-    # tasks — "can Pareta do this?"
+    # tasks — which grading contract scores my dataset?
     match = pa.tasks.match("extract key fields from contracts")
     print(match.type, match.chosen.task_id if match.chosen else None)
 

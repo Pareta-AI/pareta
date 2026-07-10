@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.1 — 2026-07-10
+
+- CLI: new `pareta rerank` and `pareta embed` commands — the Retrieval lanes
+  from the terminal. Rerank prints a ranked table (metered per document
+  scored); embed prints sizes only, with vectors via `--json` or
+  `--out vectors.jsonl` (metered per input token).
+- Agent skill + MCP server aligned with the grading-contracts doctrine:
+  task matching is "find the grading contract for an eval" — a no-match is
+  a statement about scoring, not serving; generation always goes to
+  `model:"auto"`. `list_models` is documented as informational.
+- Docs: seven new use-case example pages (medical coding, retrieval,
+  extraction, text classification, summarization, text-to-speech,
+  speech-to-text), each linking to a full runnable Python + TypeScript
+  program in [Pareta-AI/examples](https://github.com/Pareta-AI/examples).
+  Documented the 8-page PDF rasterization cap on vision requests.
+- Server-side note (no SDK change): the embeddings lane now resolves to
+  `qwen-embed-1`, at the same $0.01 / 1M-token rate.
+
 ## 1.1.0 — 2026-07-10
 
 The Retrieval capability lanes — the standard RAG stack on Pareta:

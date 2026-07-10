@@ -91,6 +91,8 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
         "async", "configuration", "cli", "mcp", "skill",
     ]),
     ("Examples", "examples", [
+        "icd-coding", "retrieval", "extraction", "text-classification",
+        "summarization", "text-to-speech", "speech-to-text",
         "evaluate-on-your-data",
         "document-extraction", "streaming-chat", "concurrent-async",
         "cost-and-metrics", "migrate-from-openai",

@@ -3,9 +3,9 @@ name: pareta
 description: >-
   Call Pareta's model:"auto" routing brain (one endpoint that routes every
   request to the best model at frontier-grade quality for a fraction of the
-  cost), benchmark it against frontier models on the user's own data, and
-  monitor spend/quality/savings. Drives the `pareta` shell command; auth is
-  the `PARETA_API_KEY` env var.
+  cost), benchmark it against frontier models on the user's own data, run
+  retrieval (rerank + embeddings), and monitor spend/quality/savings. Drives
+  the `pareta` shell command; auth is the `PARETA_API_KEY` env var.
 ---
 
 # Pareta
@@ -43,7 +43,8 @@ There is nothing to deploy or operate: no endpoints, no GPUs, no model picking.
 Several actions **spend the user's org balance** — confirm with the user before
 running them, and report what each will cost where you can:
 
-- `chat`, `auto compare`, `evals run`, `audio transcribe`, `audio speak` —
+- `chat`, `auto compare`, `evals run`, `audio transcribe`, `audio speak`,
+  `rerank` (per document scored), `embed` (per input token) —
   **metered** per call/token/minute (`auto compare` makes TWO real calls: auto
   plus a frontier vendor at its actual token cost).
 - `evals sets delete` — **destructive** (prompts unless `--yes`).
@@ -63,19 +64,22 @@ pareta chat --stream "…"                               # stream tokens
 
 `model: "auto"` is the default — Pareta picks the best model per request.
 
-### 2. Map the user's intent to a benchmarked task (free)
+### 2. Find the grading contract for an eval (free)
 
-When the user wants to know whether Pareta covers their workload — or you need
-a `task` id for an eval — resolve their plain-language intent:
+A task names how a dataset is scored — a grading contract. This step exists
+only to get a `task` id for an eval; describe the user's dataset in plain
+language:
 
 ```bash
 pareta --json tasks match "extract the key fields from these contracts"
 ```
 
 Read the `type` (`task` | `capability` | `unsupported` | `none`), the chosen
-`task_id`, and the reasoning. If `unsupported`, tell the user Pareta has no
-benchmarked task for this and stop. If a task matched, feed its `task_id`
-into an eval (below) to prove auto on their data.
+`task_id`, and the reasoning. If a task matched, feed its `task_id` into an
+eval (below) to prove auto on their data. `unsupported`/`none` mean no
+benchmarked scorer grades this dataset shape — that says nothing about
+serving: the generation work itself still goes straight to `pareta chat`
+(model `"auto"`).
 
 ### 3. Benchmark on the user's own data (metered)
 
@@ -113,6 +117,8 @@ with the frontier's real bill and latency.
   the recommended surface).
 - `pareta tasks list` / `pareta tasks show <task>` — browse the benchmark catalog.
 - `pareta audio transcribe <file>` / `pareta audio speak "<text>" --out out.wav` — speech in/out (metered per minute).
+- `pareta rerank "query" doc1 doc2 …  # or --file docs.txt` — rank documents by relevance (RAG precision; metered per document).
+- `pareta embed "text" --type query` — unit vectors for semantic search (RAG recall; metered per input token).
 - `pareta evals sets create|list|show|delete` — manage reusable eval sets.
 
 `pareta --help` (or `pareta <group> --help`) documents the full tree. Full docs:

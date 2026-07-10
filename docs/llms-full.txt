@@ -4182,6 +4182,17 @@ pareta auto compare "Summarize this clause: …" --frontier claude-sonnet-4-6
 
 `metrics` is read-only and free. `compare` is metered — it makes two real calls, one to `auto` and one to the vendor at the vendor's actual token cost (a failed vendor call bills $0). Allowed vendors: `gpt-5.5`, `gemini-3-5-flash`, `gemini-3-1-pro`, `claude-sonnet-4-6`.
 
+### `rerank` + `embed` — the retrieval lanes
+
+```bash
+pareta rerank "governing law" "clause one…" "clause two…" --top-n 3   # docs as arguments
+pareta rerank "governing law" --file docs.txt                         # or one document per line
+pareta embed "what governs this contract?" --type query              # query-side vector
+pareta embed --file passages.txt --out vectors.jsonl                  # document vectors → JSONL
+```
+
+`rerank` scores every document against the query (calibrated 0–1 scores, best first; `--top-n` only truncates the output) — metered per document scored. `embed` returns unit-normalized vectors; the table shows sizes only, so grab the vectors with `--out` (JSONL rows `{"index", "vector"}`) or `--json` — metered per input token.
+
 ### `audio` — speech in and out
 
 ```bash
@@ -4406,6 +4417,1144 @@ It bakes in the guardrails: inference / eval / compare **spend your org balance*
 - [MCP server](mcp.md) — the tools-over-a-server alternative (Claude Code, Codex, Claude Desktop, Cursor).
 - [The `pareta` CLI](cli.md) — the command surface the skill drives.
 - [Installation & authentication](installation.md) — install the CLI and mint a `pareta_sk_` key.
+
+
+
+---
+
+<!-- examples/icd-coding.md -->
+
+# Medical coding (ICD-10)
+
+Turn a clinical discharge summary into ICD-10-CM codes with one chat call. The
+summary goes to `model="auto"` as plain text; the prompt pins the output to a
+strict JSON array of `{"code", "description"}` objects; you parse the array and
+have structured codes.
+
+Medical coding is a text-in, structured-text-out job, so it rides the standard
+OpenAI-compatible chat surface — the one interface for every text workload.
+`"auto"` is the only model id; the completion is metered against your org
+balance, one debit per request regardless of internal routing.
+
+## Setup
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+See [installation](../guide/installation.md) for keys and environment.
+
+## Code a discharge summary
+
+The whole contract lives in the prompt: demand a bare JSON array of
+`{"code", "description"}` objects and nothing else. Set `temperature=0` —
+coding is a deterministic mapping from documentation to codes, and you want the
+same summary to produce the same codes every run. `max_tokens` just needs
+headroom for the array; 512 covers a typical inpatient stay.
+
+**Python**
+
+```python
+PROMPT = (
+    "Assign ICD-10-CM codes for the discharge summary below. Respond with "
+    'ONLY a JSON array of {"code", "description"} objects — no prose, '
+    "no markdown.\n\n" + DISCHARGE_SUMMARY
+)
+
+resp = pa.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": PROMPT}],
+    temperature=0,
+    max_tokens=512,
+)
+raw = resp.choices[0].message.content or ""
+```
+
+**TypeScript**
+
+```typescript
+const PROMPT =
+  "Assign ICD-10-CM codes for the discharge summary below. Respond with " +
+  'ONLY a JSON array of {"code", "description"} objects — no prose, ' +
+  "no markdown.\n\n" + DISCHARGE_SUMMARY;
+
+const resp = await pa.chat.completions.create({
+  model: "auto",
+  messages: [{ role: "user", content: PROMPT }],
+  temperature: 0,
+  max_tokens: 512,
+});
+const raw = resp.choices[0].message.content ?? "";
+```
+
+Full runnable example: [python/icd-coding/icd_coding.py](https://github.com/Pareta-AI/examples/blob/main/python/icd-coding/icd_coding.py) · [typescript/icd-coding/icd-coding.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/icd-coding/icd-coding.ts)
+
+## Parse the JSON robustly
+
+The prompt demands bare JSON, but the single most common drift is a response
+wrapped in a ` ```json ` fence. Strip a leading fence before parsing, then
+validate that the payload really is an array — anything else should fail loudly
+rather than flow downstream as half-parsed codes.
+
+**Python**
+
+```python
+import json
+
+def parse_codes(text: str) -> list[dict]:
+    t = text.strip()
+    if t.startswith("```"):                      # ```json fence — the common drift
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        t = t.rsplit("```", 1)[0]
+    codes = json.loads(t)
+    if not isinstance(codes, list):
+        raise ValueError(f"expected a JSON array, got {type(codes).__name__}")
+    return codes
+
+for c in parse_codes(raw):
+    print(f"{c.get('code', '?'):10} {c.get('description', '')}")
+```
+
+**TypeScript**
+
+```typescript
+function parseCodes(text: string): Array<{ code?: string; description?: string }> {
+  let t = text.trim();
+  if (t.startsWith("```")) {                     // ```json fence — the common drift
+    t = t.includes("\n") ? t.slice(t.indexOf("\n") + 1) : "";
+    const close = t.lastIndexOf("```");
+    if (close !== -1) t = t.slice(0, close);
+  }
+  const codes = JSON.parse(t);
+  if (!Array.isArray(codes)) throw new Error(`expected a JSON array, got ${typeof codes}`);
+  return codes;
+}
+
+for (const c of parseCodes(raw)) {
+  console.log(`${(c.code ?? "?").padEnd(10)} ${c.description ?? ""}`);
+}
+```
+
+Full runnable example: [python/icd-coding/icd_coding.py](https://github.com/Pareta-AI/examples/blob/main/python/icd-coding/icd_coding.py) · [typescript/icd-coding/icd-coding.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/icd-coding/icd-coding.ts)
+
+## Nothing to pick
+
+There is no coding model in this example because there is nothing to name:
+`"auto"` recognizes medical-coding traffic and routes it internally to the
+right serving path, per request, server-side. Your code stays a plain chat call
+with a JSON contract — the routing is Pareta's job, not a parameter.
+
+Full runnable example: [python/icd-coding/icd_coding.py](https://github.com/Pareta-AI/examples/blob/main/python/icd-coding/icd_coding.py) · [typescript/icd-coding/icd-coding.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/icd-coding/icd-coding.ts)
+
+## See also
+
+- [Inference (OpenAI-compatible)](../guide/inference.md) — the full chat surface, streaming, extra params.
+- [Chat reference](../reference/chat.md) — `chat.completions.create` request and response shapes.
+- [Streaming chat](./streaming-chat.md) — token-by-token output for long generations.
+- [Evaluating on your data](./evaluate-on-your-data.md) — benchmark `"auto"` on your own summaries, metered like inference.
+
+
+
+---
+
+<!-- examples/retrieval.md -->
+
+# Retrieval: reranking and embeddings
+
+Build search over a small support knowledge base three ways: rerank a
+candidate list with `pa.rerank(...)`, semantic-search it with
+`pa.embeddings(...)`, and compose the two into the classic two-stage RAG
+stack — embeddings for recall, reranking for precision.
+
+These are the Retrieval interfaces: `query + documents → ranked list` goes to
+`rerank`, `text → vectors` goes to `embeddings`. They are dedicated routes
+because ranked lists and vectors don't fit the chat message contract — not
+because there is anything to navigate. You never name a serving model on
+either; Pareta resolves the lane server-side, the same way `model="auto"`
+does for chat. Rerank is metered per document scored, embeddings per input
+token, both against your org balance.
+
+## Setup
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+See [installation](../guide/installation.md) if the package isn't set up yet.
+
+## Reranking
+
+`rerank(query, documents)` scores every document against the query and returns
+`(index, relevance_score)` rows, most relevant first. The scores are
+**calibrated** — each is an independent P(relevant) in (0, 1), not a softmax
+over the batch — so a fixed cutoff like `>= 0.5` is a real keep/drop filter
+that means the same thing across calls and corpora. `top_n` truncates the
+response to the best N, but all documents are still scored (and metered).
+
+**Python**
+
+```python
+KB = [
+    "Refunds: annual plans are refundable in full within 30 days of purchase...",
+    "Failed payments: a declined charge is retried after 24 hours...",
+    "Seat changes: adding a seat mid-cycle bills the prorated difference...",
+    # ...8 help-center passages in the full example
+]
+
+ranked = pa.rerank("Can I get my money back if I cancel my annual plan?", KB)
+print(ranked.pairs)                        # documents scored — the metered unit
+for r in ranked.results:                   # most relevant first
+    print(f"{r.relevance_score:.3f}  {KB[r.index][:60]}")
+
+# calibrated scores: threshold to filter, not just sort
+keep = [KB[r.index] for r in ranked.results if r.relevance_score >= 0.5]
+
+# top_n truncates the response; top_documents maps indices back to your texts
+top3 = pa.rerank("Can I get my money back if I cancel my annual plan?", KB, top_n=3)
+print(top3.top_documents(KB))              # the winning texts, best first
+```
+
+**TypeScript**
+
+```typescript
+const ranked = await pa.rerank("Can I get my money back if I cancel my annual plan?", KB);
+console.log(ranked.pairs);                 // documents scored — the metered unit
+for (const r of ranked.results) {          // most relevant first
+  console.log(`${r.relevanceScore.toFixed(3)}  ${KB[r.index].slice(0, 60)}`);
+}
+
+// calibrated scores: threshold to filter, not just sort
+const keep = ranked.results.filter((r) => r.relevanceScore >= 0.5).map((r) => KB[r.index]);
+
+// topN truncates the response; topDocuments maps indices back to your texts
+const top3 = await pa.rerank("Can I get my money back if I cancel my annual plan?", KB, { topN: 3 });
+console.log(top3.topDocuments(KB));        // the winning texts, best first
+```
+
+Full runnable example: [python/retrieval/rerank.py](https://github.com/Pareta-AI/examples/blob/main/python/retrieval/rerank.py) · [typescript/retrieval/rerank.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/retrieval/rerank.ts)
+
+## Embeddings (semantic search)
+
+Embedding is asymmetric: index your passages raw (the default), and embed the
+incoming question with `input_type="query"` so it gets the retrieval-query
+treatment. The vectors come back unit-normalized, so cosine similarity is a
+plain dot product — a one-line function, no vector library needed for a corpus
+this size.
+
+**Python**
+
+```python
+def dot(a, b):                             # unit vectors: this IS cosine
+    return sum(x * y for x, y in zip(a, b))
+
+# index side: embed all passages in one order-preserving call, raw
+index = pa.embeddings(KB)
+doc_vecs = index.vectors
+print(index.prompt_tokens)                 # tokens embedded — the metered unit
+
+# search side: the query embeds asymmetrically from the passages
+q = pa.embeddings("can I get a refund on my yearly subscription?",
+                  input_type="query").vectors[0]
+
+top_k = sorted(range(len(KB)), key=lambda i: dot(q, doc_vecs[i]), reverse=True)[:3]
+for i in top_k:
+    print(f"{dot(q, doc_vecs[i]):.3f}  {KB[i][:60]}")
+```
+
+**TypeScript**
+
+```typescript
+const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+
+// index side: embed all passages in one order-preserving call, raw
+const index = await pa.embeddings(KB);
+const docVecs = index.vectors;
+console.log(index.promptTokens);           // tokens embedded — the metered unit
+
+// search side: the query embeds asymmetrically from the passages
+const q = (await pa.embeddings("can I get a refund on my yearly subscription?",
+                               { inputType: "query" })).vectors[0];
+
+const topK = KB.map((_, i) => i)
+  .sort((a, b) => dot(q, docVecs[b]) - dot(q, docVecs[a]))
+  .slice(0, 3);
+for (const i of topK) {
+  console.log(`${dot(q, docVecs[i]).toFixed(3)}  ${KB[i].slice(0, 60)}`);
+}
+```
+
+Full runnable example: [python/retrieval/semantic_search.py](https://github.com/Pareta-AI/examples/blob/main/python/retrieval/semantic_search.py) · [typescript/retrieval/semantic-search.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/retrieval/semantic-search.ts)
+
+## The two-stage RAG stack
+
+The two lanes have complementary jobs. Embeddings are the **recall** stage: a
+cheap, per-token wide net that scans the whole corpus and won't miss a
+relevant passage phrased nothing like the question. The reranker is the
+**precision** stage: a per-document scorer that reads each (query, candidate)
+pair closely and is far better at deciding what actually answers the question
+— too expensive for the whole corpus, exactly right for the shortlist. So:
+embed-retrieve a wide top-K, rerank only those, keep the calibrated winners.
+
+**Python**
+
+```python
+# stage 1 — recall: cosine top-5 over the whole corpus
+doc_vecs = pa.embeddings(KB).vectors
+q = pa.embeddings(QUERY, input_type="query").vectors[0]
+candidates = sorted(range(len(KB)), key=lambda i: dot(q, doc_vecs[i]),
+                    reverse=True)[:5]
+
+# stage 2 — precision: rerank only the 5 candidates (5 metered, not 8)
+pool = [KB[i] for i in candidates]
+ranked = pa.rerank(QUERY, pool, top_n=2)
+
+for r in ranked.results:                   # r.index points into pool;
+    print(f"{r.relevance_score:.3f}  {pool[r.index]}")  # candidates[r.index] recovers the KB index
+```
+
+**TypeScript**
+
+```typescript
+// stage 1 — recall: cosine top-5 over the whole corpus
+const docVecs = (await pa.embeddings(KB)).vectors;
+const q = (await pa.embeddings(QUERY, { inputType: "query" })).vectors[0];
+const candidates = KB.map((_, i) => i)
+  .sort((a, b) => dot(q, docVecs[b]) - dot(q, docVecs[a]))
+  .slice(0, 5);
+
+// stage 2 — precision: rerank only the 5 candidates (5 metered, not 8)
+const pool = candidates.map((i) => KB[i]);
+const ranked = await pa.rerank(QUERY, pool, { topN: 2 });
+
+for (const r of ranked.results) {          // r.index points into pool;
+  console.log(`${r.relevanceScore.toFixed(3)}  ${pool[r.index]}`);  // candidates[r.index] recovers the KB index
+}
+```
+
+Full runnable example: [python/retrieval/rag_search.py](https://github.com/Pareta-AI/examples/blob/main/python/retrieval/rag_search.py) · [typescript/retrieval/rag-search.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/retrieval/rag-search.ts)
+
+## See also
+
+- [rerank reference](../reference/rerank.md) — the full `Rerank` object, limits, and calibration notes.
+- [embeddings reference](../reference/embeddings.md) — the `Embeddings` object and input limits.
+- [Inference](../guide/inference.md) — `model="auto"` chat, the lane the retrieved context usually feeds.
+- Prove it on your own data: [evaluate on your data](./evaluate-on-your-data.md) benchmarks both retrieval stages against your own graded relevance.
+
+
+
+---
+
+<!-- examples/extraction.md -->
+
+# Extraction: documents and contracts
+
+Pull structured fields out of documents — a scanned invoice, a PDF, a contract
+— and get JSON back. You'll extract vendor/total/line-items from a real invoice
+image, then key legal fields from a contract's text.
+
+Extraction is a chat job: image or text in, JSON out, so it all goes through
+`chat.completions.create(model="auto")`, OpenAI-compatible on the wire. One
+interface, whatever the document looks like; each request is one debit against
+the org balance regardless of internal routing.
+
+## Setup
+
+Install the SDK ([installation guide](../guide/installation.md)) and set
+`PARETA_API_KEY`.
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+## Visual documents (images and PDFs)
+
+A visual document goes in as OpenAI content parts: one `text` part stating the
+fields you want, one `image_url` part carrying the pixels as a base64 data URI.
+Pin `temperature=0` — extraction wants determinism, not creativity — and ask for
+JSON only, so the response parses without ceremony. This example downloads a
+real invoice from the public examples dataset and extracts five fields from it.
+
+**Python**
+
+```python
+import base64, json, urllib.request
+
+url = ("https://raw.githubusercontent.com/Pareta-AI/example-datasets"
+       "/main/invoice-extraction/documents/0.jpg")
+img_b64 = base64.b64encode(urllib.request.urlopen(url).read()).decode()
+
+resp = pa.chat.completions.create(
+    model="auto",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": 'Extract {"vendor", "invoice_no", "date", '
+                                     '"total", "line_items"} as JSON. Return ONLY the JSON object.'},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+        ],
+    }],
+    temperature=0,
+    max_tokens=1024,
+)
+fields = json.loads(resp.choices[0].message.content)
+```
+
+**TypeScript**
+
+```typescript
+const url = "https://raw.githubusercontent.com/Pareta-AI/example-datasets" +
+            "/main/invoice-extraction/documents/0.jpg";
+const imgB64 = Buffer.from(await (await fetch(url)).arrayBuffer()).toString("base64");
+
+const resp = await pa.chat.completions.create({
+  model: "auto",
+  messages: [{
+    role: "user",
+    content: [
+      { type: "text", text: 'Extract {"vendor", "invoice_no", "date", ' +
+                            '"total", "line_items"} as JSON. Return ONLY the JSON object.' },
+      { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imgB64}` } },
+    ],
+  }],
+  temperature: 0,
+  max_tokens: 1024,
+});
+const fields = JSON.parse(resp.choices[0].message.content ?? "");
+```
+
+Expected output for that document:
+
+```json
+{
+  "vendor": "Bradley-Andrade",
+  "invoice_no": "97159829",
+  "date": "2015-09-18",
+  "total": 978.12,
+  "line_items": [ ... ]
+}
+```
+
+### PDFs
+
+You can hand a PDF into the same `image_url` slot. When a base64 data URI
+declares `application/pdf` — or its decoded bytes start with the `%PDF` magic,
+so a wrong or missing MIME type is still caught — the platform rasterizes it
+server-side before inference: the PDF block is replaced with one PNG image
+block per rendered page, up to the **first 8 pages** (sibling keys like
+`detail` are preserved on each page). For longer documents, split the PDF or
+send pre-rasterized page images. A PDF that cannot be rendered returns a 400
+with a clear message rather than forwarding raw bytes a vision model would
+reject. Plain `http(s)` image
+URLs and URL-encoded (non-base64) data URIs pass through untouched.
+
+**Python**
+
+```python
+pdf_b64 = base64.b64encode(open("contract.pdf", "rb").read()).decode()
+
+{"type": "image_url", "image_url": {"url": f"data:application/pdf;base64,{pdf_b64}"}}
+```
+
+**TypeScript**
+
+```typescript
+const pdfB64 = (await readFile("contract.pdf")).toString("base64");
+
+({ type: "image_url", image_url: { url: `data:application/pdf;base64,${pdfB64}` } });
+```
+
+Full runnable example: [python/extraction/visual_document.py](https://github.com/Pareta-AI/examples/blob/main/python/extraction/visual_document.py) · [typescript/extraction/visual-document.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/extraction/visual-document.ts)
+
+## Contract fields (text)
+
+When the document is already text, there is nothing special to do: the contract
+goes in as ordinary string content on the same chat surface. Name the fields,
+give the model an explicit out (`null`) for anything the text does not state —
+otherwise it will guess — and keep `temperature=0`. Sample contract text from
+CUAD (Hendrycks et al.), CC-BY-4.0.
+
+**Python**
+
+```python
+import json
+from pathlib import Path
+
+contract_text = Path("data/sample-contract.txt").read_text()
+
+prompt = ('Extract {"parties", "agreement_date", "effective_date", "governing_law"} '
+          "as JSON. parties is a list of legal entity names; dates are YYYY-MM-DD; "
+          "use null for anything the text does not state. Return ONLY the JSON object.")
+
+resp = pa.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": f"{prompt}\n\n---\n\n{contract_text}"}],
+    temperature=0,
+    max_tokens=512,
+)
+fields = json.loads(resp.choices[0].message.content)
+print(fields["parties"], fields["governing_law"])
+```
+
+**TypeScript**
+
+```typescript
+import { readFile } from "node:fs/promises";
+
+const contractText = await readFile("data/sample-contract.txt", "utf8");
+
+const prompt = 'Extract {"parties", "agreement_date", "effective_date", "governing_law"} ' +
+               "as JSON. parties is a list of legal entity names; dates are YYYY-MM-DD; " +
+               "use null for anything the text does not state. Return ONLY the JSON object.";
+
+const resp = await pa.chat.completions.create({
+  model: "auto",
+  messages: [{ role: "user", content: `${prompt}\n\n---\n\n${contractText}` }],
+  temperature: 0,
+  max_tokens: 512,
+});
+const fields = JSON.parse(resp.choices[0].message.content ?? "");
+console.log(fields.parties, fields.governing_law);
+```
+
+Full runnable example: [python/extraction/contract_fields.py](https://github.com/Pareta-AI/examples/blob/main/python/extraction/contract_fields.py) · [typescript/extraction/contract-fields.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/extraction/contract-fields.ts)
+
+## See also
+
+- [Inference (OpenAI-compatible)](../guide/inference.md) — the full chat surface: streaming, extra params, error handling.
+- [Chat reference](../reference/chat.md) — `chat.completions.create` request and response shapes.
+- [Document extraction end-to-end](./document-extraction.md) — the full document workflow, from your own files to production.
+- Prove it on your own data: [evaluate on your data](./evaluate-on-your-data.md) — benchmark `"auto"` against frontier baselines on your own documents before you commit.
+
+
+
+---
+
+<!-- examples/text-classification.md -->
+
+# Text classification
+
+Turn `model="auto"` into a production text classifier: a closed label set in the system prompt, a few labeled examples, `temperature=0`, and a one-word answer your code can branch on. This page builds two of them — a banking-support intent classifier and a hate-speech moderation gate that routes violations to human review.
+
+Classification is a chat-shaped job, so it goes to the one chat interface: `pa.chat.completions.create(model="auto", ...)`, OpenAI-compatible on the wire. There is nothing to pick and nothing to deploy — auto routes every request server-side, and each call is one metered debit against your org balance regardless of internal routing.
+
+## Setup
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+See [installation](../guide/installation.md) for getting the SDK and key in place.
+
+## Intent classification
+
+A closed label set is the whole contract: the system prompt names every allowed label and demands the label alone, `temperature=0` makes the answer repeatable, and a membership check after the call guarantees no stray token ever escapes the set. The few-shot pairs are the part worth your attention — on pattern tasks like intent routing, the examples in the prompt move accuracy far more than any sampling knob. When the classifier keeps confusing two intents, add a pair that shows the right answer; that is the tuning loop.
+
+**Python**
+
+```python
+LABELS = ("card_arrival", "card_not_working", "lost_or_stolen_card", "transfer_failed",
+          "balance_inquiry", "exchange_rate", "top_up_failed", "other")
+
+SYSTEM = (
+    "You classify banking-support messages into exactly one intent label: "
+    + ", ".join(LABELS)
+    + ". Reply with the label only — lowercase, no punctuation, no explanation. "
+    "If no label fits, reply: other."
+)
+
+FEW_SHOT = (  # the lever on pattern tasks — swap pairs to steer the classifier
+    ("My new card was supposed to arrive two weeks ago and it still hasn't", "card_arrival"),
+    ("The shop terminal declined my card even though my account has money", "card_not_working"),
+    ("I made a transfer to my landlord yesterday and it bounced back", "transfer_failed"),
+)
+
+def classify(text: str) -> str:
+    messages = [{"role": "system", "content": SYSTEM}]
+    for user, label in FEW_SHOT:
+        messages.append({"role": "user", "content": user})
+        messages.append({"role": "assistant", "content": label})
+    messages.append({"role": "user", "content": text})
+
+    resp = pa.chat.completions.create(
+        model="auto", messages=messages, temperature=0, max_tokens=8,
+    )
+    label = (resp.choices[0].message.content or "").strip().lower()
+    return label if label in LABELS else "other"   # closed set, enforced
+```
+
+**TypeScript**
+
+```typescript
+const LABELS = ["card_arrival", "card_not_working", "lost_or_stolen_card", "transfer_failed",
+  "balance_inquiry", "exchange_rate", "top_up_failed", "other"] as const;
+type Label = (typeof LABELS)[number];
+
+const SYSTEM =
+  "You classify banking-support messages into exactly one intent label: " +
+  LABELS.join(", ") +
+  ". Reply with the label only — lowercase, no punctuation, no explanation. " +
+  "If no label fits, reply: other.";
+
+const FEW_SHOT: Array<[string, Label]> = [   // the lever on pattern tasks
+  ["My new card was supposed to arrive two weeks ago and it still hasn't", "card_arrival"],
+  ["The shop terminal declined my card even though my account has money", "card_not_working"],
+  ["I made a transfer to my landlord yesterday and it bounced back", "transfer_failed"],
+];
+
+async function classify(text: string): Promise<Label> {
+  const messages = [{ role: "system", content: SYSTEM }];
+  for (const [user, label] of FEW_SHOT) {
+    messages.push({ role: "user", content: user }, { role: "assistant", content: label });
+  }
+  messages.push({ role: "user", content: text });
+
+  const resp = await pa.chat.completions.create({
+    model: "auto", messages, temperature: 0, max_tokens: 8,
+  });
+  const label = (resp.choices[0].message.content ?? "").trim().toLowerCase();
+  return (LABELS as readonly string[]).includes(label) ? (label as Label) : "other";
+}
+```
+
+`max_tokens=8` caps each answer at the label itself, and one call classifies one utterance — a batch is just a loop. The fallback to `other` matters more than it looks: your downstream `switch` never sees an unexpected string, no matter what the model emits.
+
+Full runnable example: [python/classification/intent.py](https://github.com/Pareta-AI/examples/blob/main/python/classification/intent.py) · [typescript/classification/intent.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/classification/intent.ts)
+
+## Content moderation (hate speech)
+
+Moderation is the same recipe with three labels — `hate`, `offensive`, `neither` — and one extra obligation: acting on the verdict. The prompt carries a one-line definition per label because the hate/offensive boundary (group-directed vs. individual-directed hostility) is exactly what untrained judgment gets wrong, and the two classes usually get different handling downstream. The strict one-word output is what makes the branch after the call safe to write.
+
+**Python**
+
+```python
+LABELS = ("hate", "offensive", "neither")
+
+SYSTEM = (
+    "You are a content-moderation classifier. Label the text with exactly one of:\n"
+    "hate — demeans or attacks a group of people based on a group identity\n"
+    "offensive — insulting, hostile, or demeaning toward an individual, but not group-based\n"
+    "neither — none of the above\n"
+    "Reply with the label only — one lowercase word, no punctuation, no explanation."
+)
+
+def moderate(text: str) -> str:
+    resp = pa.chat.completions.create(
+        model="auto",
+        messages=[{"role": "system", "content": SYSTEM},
+                  {"role": "user", "content": text}],
+        temperature=0,
+        max_tokens=4,
+    )
+    label = (resp.choices[0].message.content or "").strip().lower()
+    return label if label in LABELS else "offensive"   # fail closed → human review
+
+review_queue = []
+for text in incoming_texts:
+    label = moderate(text)
+    if label != "neither":
+        review_queue.append((label, text))   # violations go to a human
+```
+
+**TypeScript**
+
+```typescript
+const LABELS = ["hate", "offensive", "neither"] as const;
+type Label = (typeof LABELS)[number];
+
+const SYSTEM = [
+  "You are a content-moderation classifier. Label the text with exactly one of:",
+  "hate — demeans or attacks a group of people based on a group identity",
+  "offensive — insulting, hostile, or demeaning toward an individual, but not group-based",
+  "neither — none of the above",
+  "Reply with the label only — one lowercase word, no punctuation, no explanation.",
+].join("\n");
+
+async function moderate(text: string): Promise<Label> {
+  const resp = await pa.chat.completions.create({
+    model: "auto",
+    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: text }],
+    temperature: 0,
+    max_tokens: 4,
+  });
+  const label = (resp.choices[0].message.content ?? "").trim().toLowerCase();
+  return (LABELS as readonly string[]).includes(label) ? (label as Label) : "offensive";
+}
+
+const reviewQueue: Array<[Label, string]> = [];
+for (const text of incomingTexts) {
+  const label = await moderate(text);
+  if (label !== "neither") reviewQueue.push([label, text]);   // violations go to a human
+}
+```
+
+Note the failure direction: an answer outside the label set is coerced to `offensive`, not `neither`, so anything the classifier fumbles still reaches human eyes. Fail-open moderation is the one bug this recipe cannot afford.
+
+Full runnable example: [python/classification/moderation.py](https://github.com/Pareta-AI/examples/blob/main/python/classification/moderation.py) · [typescript/classification/moderation.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/classification/moderation.ts)
+
+## See also
+
+- [Inference (OpenAI-compatible)](../guide/inference.md) — the full chat surface behind `model="auto"`.
+- [Chat reference](../reference/chat.md) — request params and response schema.
+- [Streaming chat completions](./streaming-chat.md) — token-by-token output for longer generations.
+- Prove it on your own data: [run an eval](./evaluate-on-your-data.md) that benchmarks `"auto"` against frontier baselines on your own labeled texts.
+
+
+
+---
+
+<!-- examples/summarization.md -->
+
+# Summarization
+
+Turn a raw meeting transcript into a three-sentence executive summary plus an owner — item — due action-items list, with one call to `model="auto"`. The output format lives entirely in the prompt, so the same call summarizes support threads, incident timelines, or research notes by swapping the instructions.
+
+Summarization is a chat/text job, so it goes to the one chat interface — `pa.chat.completions.create(model="auto", ...)`, OpenAI-compatible on the wire. There is no model to pick and nothing to deploy: `"auto"` routes every request server-side, and a successful completion is one debit against your org balance regardless of how it routes internally.
+
+## Setup
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+See [installation](../guide/installation.md) for getting the SDK and key in place.
+
+## Executive summary + action items
+
+Everything that shapes the output is prompt: a system message that pins the summarizer to the facts, and an instruction block that spells out the exact format — three sentences, then `- owner — item — due date` bullets, with a final bullet for anything explicitly deferred. `temperature=0.2` keeps repeated runs of the same transcript close to each other, and `max_tokens=512` is generous headroom for a one-page meeting.
+
+**Python**
+
+```python
+from pathlib import Path
+
+transcript = Path("data/meeting-notes.txt").read_text(encoding="utf-8")
+
+completion = pa.chat.completions.create(
+    model="auto",
+    messages=[
+        {"role": "system", "content": "You summarize meeting transcripts for executives. "
+                                      "Be factual; never invent owners, dates, or decisions."},
+        {"role": "user", "content": INSTRUCTIONS + "\n" + transcript},
+    ],
+    temperature=0.2,
+    max_tokens=512,
+)
+print(completion.choices[0].message.content)
+print(completion.usage.total_tokens)
+```
+
+**TypeScript**
+
+```typescript
+import { readFile } from "node:fs/promises";
+
+const transcript = await readFile("data/meeting-notes.txt", "utf8");
+
+const completion = await pa.chat.completions.create({
+  model: "auto",
+  messages: [
+    { role: "system", content: "You summarize meeting transcripts for executives. " +
+                               "Be factual; never invent owners, dates, or decisions." },
+    { role: "user", content: INSTRUCTIONS + "\n" + transcript },
+  ],
+  temperature: 0.2,
+  max_tokens: 512,
+});
+console.log(completion.choices[0].message.content);
+console.log(completion.usage.totalTokens);
+```
+
+A `finish_reason` of `"length"` on the choice means the summary hit `max_tokens` before it finished — raise the cap rather than trusting a truncated action-items list.
+
+Full runnable example: [python/summarization/summarize.py](https://github.com/Pareta-AI/examples/blob/main/python/summarization/summarize.py) · [typescript/summarization/summarize.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/summarization/summarize.ts)
+
+## Stream the summary
+
+For anything a person reads as it generates — a summary panel in your app, a CLI — pass `stream=True` and the same call returns an iterator of chunks instead of one completion. Print `chunk.choices[0].delta.content` as it arrives; the delta is `None` on bookkeeping chunks, so keep the guard. Everything else about the request, including the single debit, is unchanged.
+
+**Python**
+
+```python
+stream = pa.chat.completions.create(
+    model="auto",
+    messages=messages,        # same system + transcript messages as above
+    stream=True,
+    temperature=0.2,
+    max_tokens=512,
+)
+for chunk in stream:
+    delta = chunk.choices[0].delta.content
+    if delta:
+        print(delta, end="", flush=True)
+print()
+```
+
+**TypeScript**
+
+```typescript
+const stream = pa.chat.completions.create({
+  model: "auto",
+  messages,                   // same system + transcript messages as above
+  stream: true,
+  temperature: 0.2,
+  max_tokens: 512,
+});
+for await (const chunk of stream) {
+  const delta = chunk.choices[0].delta.content;
+  if (delta) {
+    process.stdout.write(delta);
+  }
+}
+console.log();
+```
+
+Chunk anatomy, accumulation, async streaming, and failure behavior are covered in [streaming chat completions](./streaming-chat.md).
+
+Full runnable example: [python/summarization/summarize.py](https://github.com/Pareta-AI/examples/blob/main/python/summarization/summarize.py) · [typescript/summarization/summarize.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/summarization/summarize.ts)
+
+## See also
+
+- [Inference](../guide/inference.md) — the full chat surface: parameters, errors, and the OpenAI-compatible wire format.
+- [Streaming chat completions](./streaming-chat.md) — chunks, accumulation, and async streaming in depth.
+- [Error handling](../guide/errors-and-retries.md) — `InsufficientCreditsError` (402) and the rest of the exception hierarchy.
+- Prove it on your own data: [evaluate summaries from your real transcripts](./evaluate-on-your-data.md), metered against the same org balance.
+
+
+
+---
+
+<!-- examples/text-to-speech.md -->
+
+# Text to speech
+
+Turn a line of text into spoken audio and write it to a `.wav` file — one call
+in, one file out. You'll synthesize a short customer notification with
+`pa.audio.speech(...)`, save the returned audio, and read back the format,
+sample rate, and the duration that was metered.
+
+Speech is text in, audio bytes out — a data shape the chat message contract
+can't carry — so it has its own route, `POST /v1/audio/speech`, instead of
+`chat.completions`. That is the only reason the route exists: there is no
+voice model to name and nothing to deploy. You hand Pareta the text; everything
+behind the call is resolved server-side, exactly as `model="auto"` does for chat.
+
+## Setup
+
+Install the SDK and set `PARETA_API_KEY` (see [installation](../guide/installation.md)).
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+## Synthesize a notification
+
+`speech(text)` returns a typed `Speech` whose `.audio` is the synthesized audio
+already base64-decoded to raw bytes; `.save(path)` writes them to disk. The
+response also carries the container format, the sample rate, and `duration_s` —
+the length of the *output* audio, which is the metered unit (billed per minute
+of output, not per token).
+
+**Python**
+
+```python
+speech = pa.audio.speech(
+    "Your appointment is confirmed for Thursday at two PM. "
+    "Reply R to reschedule, or call us any time."
+)
+speech.save("welcome.wav")
+
+print(speech.format)        # container/codec, e.g. "wav"
+print(speech.sample_rate)   # Hz
+print(speech.duration_s)    # output length in seconds — the metered unit
+```
+
+**TypeScript**
+
+```typescript
+const speech = await pa.audio.speech(
+  "Your appointment is confirmed for Thursday at two PM. " +
+    "Reply R to reschedule, or call us any time.",
+);
+await speech.save("welcome.wav");   // Node only — lazy node:fs under the hood
+
+console.log(speech.format);        // container/codec, e.g. "wav"
+console.log(speech.sampleRate);    // Hz
+console.log(speech.durationS);     // output length in seconds — the metered unit
+```
+
+Empty or whitespace-only text raises locally (`ValueError` in Python, a
+`ParetaError` in TypeScript) before any request goes out.
+
+Full runnable example: [python/tts/speak.py](https://github.com/Pareta-AI/examples/blob/main/python/tts/speak.py) · [typescript/tts/speak.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/tts/speak.ts)
+
+## Bytes, voice, and metering
+
+You don't have to touch the filesystem: `.audio` is the decoded bytes, ready
+for a response body or an object store, and `.save()` returns the same `Speech`
+so writing a file and keeping the bytes chains into one expression. `voice=` is
+the one optional knob — a voice id; omit it for the default voice. The call
+debits your org balance per minute of output audio; a zero balance raises
+`InsufficientCreditsError` (402) and no audio is generated.
+
+**Python**
+
+```python
+from pareta import InsufficientCreditsError
+
+try:
+    audio_bytes = pa.audio.speech(
+        "Your order has shipped and is on its way.",
+    ).save("shipped.wav").audio      # write the file and keep the bytes
+
+    print(len(audio_bytes), "bytes")
+except InsufficientCreditsError:
+    print("Org out of credit — top up in the dashboard, then re-run.")
+```
+
+**TypeScript**
+
+```typescript
+import { InsufficientCreditsError } from "pareta";
+
+try {
+  const s = await pa.audio.speech("Your order has shipped and is on its way.");
+  await s.save("shipped.wav");
+  const audioBytes = s.audio;       // Uint8Array — the same decoded bytes
+
+  console.log(audioBytes.length, "bytes");
+} catch (e) {
+  if (e instanceof InsufficientCreditsError) {
+    console.log("Org out of credit — top up in the dashboard, then re-run.");
+  } else {
+    throw e;
+  }
+}
+```
+
+Full runnable example: [python/tts/speak.py](https://github.com/Pareta-AI/examples/blob/main/python/tts/speak.py) · [typescript/tts/speak.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/tts/speak.ts)
+
+## See also
+
+- [audio reference](../reference/audio.md) — the full `pa.audio` surface: `speech` (TTS) and `transcriptions` (ASR), response objects, async twins.
+- [Errors and retries](../guide/errors-and-retries.md) — `InsufficientCreditsError` and the full exception hierarchy.
+- [Core concepts](../guide/core-concepts.md) — why speech has its own route while everything chat-shaped goes through `model="auto"`.
+- Prove it on your own data: [evaluate on your data](./evaluate-on-your-data.md) benchmarks Pareta against frontier baselines on your own examples, metered the same way.
+
+
+
+---
+
+<!-- examples/speech-to-text.md -->
+
+# Speech to text
+
+Turn a recorded audio clip into text with `pa.audio.transcriptions(...)`. One
+call sends the clip to `POST /v1/audio/transcriptions` and returns the
+transcript, the detected language, and the audio duration that was metered.
+
+Speech has its own route because audio bytes do not fit the chat message
+contract — that is the only reason it is not `chat.completions`. Everything
+else works the same way `model="auto"` does for chat: you never pick a serving
+model or a GPU; Pareta resolves the ASR lane server-side. Transcription is
+metered **per minute of input audio** against your org balance, and an empty
+balance raises `InsufficientCreditsError` (402).
+
+## Setup
+
+Install the SDK ([installation guide](../guide/installation.md)), export
+`PARETA_API_KEY`, and build the client from the environment:
+
+**Python**
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+**TypeScript**
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+```
+
+## Transcribe a file
+
+The common case is a file on disk: pass the path and the SDK reads and encodes
+it for you. The `Transcription` you get back carries the transcript on
+`.text`, the detected language on `.language`, and the input duration on
+`.duration_s` (`.durationS` in TypeScript) — that duration is what the
+per-minute meter charged.
+
+**Python**
+
+```python
+t = pa.audio.transcriptions("meeting-clip.wav")
+
+print(t.text)         # the transcript
+print(t.language)     # detected language, e.g. "en"
+print(t.duration_s)   # metered input length in seconds
+```
+
+**TypeScript**
+
+```typescript
+const t = await pa.audio.transcriptions("meeting-clip.wav");
+
+console.log(t.text);        // the transcript
+console.log(t.language);    // detected language, e.g. "en"
+console.log(t.durationS);   // metered input length in seconds
+```
+
+Full runnable example: [python/asr/transcribe.py](https://github.com/Pareta-AI/examples/blob/main/python/asr/transcribe.py) · [typescript/asr/transcribe.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/asr/transcribe.ts)
+
+## Bytes and base64 input
+
+`audio` accepts three forms, so the clip does not have to touch disk first.
+Raw bytes fit audio you already hold in memory — an upload body, a microphone
+buffer — and a base64 string passes pre-encoded audio (say, off a webhook or a
+queue message) through untouched. One casing trap in TypeScript: a plain
+string is always treated as a **file path**, so pre-encoded audio must be
+wrapped as `{ base64: ... }`; in Python a non-path string is assumed to
+already be base64.
+
+**Python**
+
+```python
+# 1. path (str or os.PathLike) — read + encoded for you
+t = pa.audio.transcriptions("meeting-clip.wav")
+
+# 2. raw bytes — e.g. an upload body already in memory
+raw = open("meeting-clip.wav", "rb").read()
+t = pa.audio.transcriptions(raw)
+
+# 3. base64 string — passed through untouched
+import base64
+b64 = base64.b64encode(raw).decode("ascii")
+t = pa.audio.transcriptions(b64)
+```
+
+**TypeScript**
+
+```typescript
+import { readFile } from "node:fs/promises";
+
+// 1. string = FILE PATH — read + encoded for you (Node)
+let t = await pa.audio.transcriptions("meeting-clip.wav");
+
+// 2. raw bytes — Uint8Array, ArrayBuffer, or Blob
+const raw = await readFile("meeting-clip.wav");   // Buffer (a Uint8Array)
+t = await pa.audio.transcriptions(raw);
+
+// 3. pre-encoded base64 — must be wrapped, a bare string means a path
+t = await pa.audio.transcriptions({ base64: raw.toString("base64") });
+```
+
+Full runnable example: [python/asr/transcribe.py](https://github.com/Pareta-AI/examples/blob/main/python/asr/transcribe.py) · [typescript/asr/transcribe.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/asr/transcribe.ts)
+
+## The language hint
+
+`language` is an optional ISO hint. Omit it and the lane detects the language
+from the audio itself — the right default for mixed or unknown sources. Pass
+it when you already know the language: on short or noisy clips the hint
+removes the one thing detection can get wrong.
+
+**Python**
+
+```python
+t = pa.audio.transcriptions("support-call.wav", language="en")
+print(t.language)   # "en" — the hint you gave, confirmed back
+```
+
+**TypeScript**
+
+```typescript
+const t = await pa.audio.transcriptions("support-call.wav", { language: "en" });
+console.log(t.language);   // "en" — the hint you gave, confirmed back
+```
+
+Full runnable example: [python/asr/transcribe.py](https://github.com/Pareta-AI/examples/blob/main/python/asr/transcribe.py) · [typescript/asr/transcribe.ts](https://github.com/Pareta-AI/examples/blob/main/typescript/asr/transcribe.ts)
+
+## See also
+
+- [The audio reference](../reference/audio.md) — full `transcriptions` / `speech` signatures, response models, and metering details.
+- [Text to speech](./text-to-speech.md) — the companion lane; the runnable example's sample clip was synthesized with it.
+- [Error handling](../guide/errors-and-retries.md) — the exception hierarchy, including `InsufficientCreditsError` (402).
+- Prove it on your own data: [evaluate on your data](./evaluate-on-your-data.md) benchmarks the same lanes on your own recordings, metered against the same org balance.
 
 
 
@@ -7641,12 +8790,14 @@ The client is a namespace router. Every capability hangs off it as an attribute.
 |-----------|-----------|------------|--------------|-----------|
 | `chat` | `Chat` | `AsyncChat` | OpenAI-compatible inference via `chat.completions.create(model="auto", ...)`. Metered. | [chat](./chat.md) |
 | `models` | `Models` | `AsyncModels` | `models.list()` — the OpenAI-compatible model listing: exactly one entry, `"auto"`. | [models](./models.md) |
-| `tasks` | `Tasks` | `AsyncTasks` | The benchmark catalog behind auto: `list`, `retrieve`, `match`. | [tasks](./tasks.md) |
+| `tasks` | `Tasks` | `AsyncTasks` | The grading-contract directory for evals: `list`, `retrieve`, `match`. | [tasks](./tasks.md) |
 | `evals` | `Evals` | `AsyncEvals` | `evals.sets`, `evals.runs`, and `evals.frontier_models(...)`. Metered. | [evals](./evals.md) |
 | `audio` | `Audio` | `AsyncAudio` | Speech: `audio.transcriptions(...)` (ASR) and `audio.speech(...)` (TTS). Metered per minute. | [audio](./audio.md) |
+| `rerank` | callable | callable | `pa.rerank(query, documents, top_n=...)` — calibrated document reranking. Metered per document. | [rerank](./rerank.md) |
+| `embeddings` | callable | callable | `pa.embeddings(texts, input_type=...)` — unit-normalized vectors. Metered per input token. | [embeddings](./embeddings.md) |
 | `auto` | `Auto` | `AsyncAuto` | `auto.metrics()` — your org's auto-traffic rollup — and `auto.compare_frontier(...)`, a metered frontier side-by-side. | [quickstart](../guide/quickstart.md) |
 
-The TypeScript client mirrors five of the six — `chat`, `models`, `tasks`, `evals`, `auto` — as camelCase methods on one Promise-only `Pareta`. `audio` is Python-only.
+The TypeScript client mirrors all of them — `chat`, `models`, `tasks`, `evals`, `audio`, `auto` as camelCase namespaces, `rerank`/`embeddings` as the same callable fields — on one Promise-only `Pareta` (full capability parity as of `pareta` 1.2.0 on npm).
 
 A tour of the core namespaces against one client:
 
@@ -7654,7 +8805,7 @@ A tour of the core namespaces against one client:
 from pareta import Pareta
 
 with Pareta.from_env() as pa:
-    # tasks — "can Pareta do this?"
+    # tasks — which grading contract scores my dataset?
     match = pa.tasks.match("extract key fields from contracts")
     print(match.type, match.chosen.task_id if match.chosen else None)
 

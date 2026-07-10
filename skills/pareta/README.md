@@ -2,8 +2,8 @@
 
 A single [`SKILL.md`](./SKILL.md) that teaches an AI coding agent to drive the
 `pareta` CLI — call `model:"auto"` (Pareta routes every request to the best
-model), benchmark it against frontier models on your own data, and monitor
-spend/quality/savings.
+model), benchmark it against frontier models on your own data, run retrieval
+(rerank + embeddings), and monitor spend/quality/savings.
 
 Claude Code and Codex use the **same** skill format (YAML frontmatter `name` +
 `description` + a Markdown body), so the one file works in both. The agent loads

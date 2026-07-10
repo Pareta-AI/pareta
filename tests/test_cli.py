@@ -15,7 +15,9 @@ from typer.testing import CliRunner
 import pareta
 from pareta import (
     ChatCompletion,
+    Embeddings,
     ModelList,
+    Rerank,
     Task,
     TaskMatch,
     Transcription,
@@ -296,3 +298,173 @@ def test_audio_speak_writes_file(patch_client, tmp_path):
     assert result.exit_code == 0
     assert out.exists()
     assert out.read_bytes() == b"RIFFwav"
+
+
+# ── rerank ───────────────────────────────────────────────────────────────
+def _rerank_fake(captured):
+    """Fake for the callable `client.rerank` resource; records its args."""
+    ranked = Rerank({"results": [{"index": 2, "relevance_score": 0.931},
+                                 {"index": 0, "relevance_score": 0.412}],
+                     "pairs": 3})
+
+    def _rerank(query, documents, *, top_n=None):
+        captured.update(query=query, documents=list(documents), top_n=top_n)
+        return ranked
+
+    return _fake_client(rerank=_rerank)
+
+
+def test_rerank_renders_table_and_metering(patch_client):
+    captured = {}
+    patch_client(_rerank_fake(captured))
+    result = runner.invoke(cli.app, ["rerank", "governing law",
+                                     "doc alpha", "doc beta", "doc gamma",
+                                     "--top-n", "2"])
+    assert result.exit_code == 0
+    assert "0.931" in result.output
+    assert "doc gamma" in result.output  # index 2, ranked first
+    assert "3 documents scored (metered per document)" in result.output
+    assert captured["query"] == "governing law"
+    assert captured["documents"] == ["doc alpha", "doc beta", "doc gamma"]
+    assert captured["top_n"] == 2
+
+
+def test_rerank_json(patch_client):
+    captured = {}
+    patch_client(_rerank_fake(captured))
+    result = runner.invoke(cli.app, ["--json", "rerank", "q", "a", "b", "c"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["results"][0]["index"] == 2
+    assert parsed["pairs"] == 3
+    assert captured["top_n"] is None
+
+
+def test_rerank_no_documents_errors_clean(patch_client):
+    patch_client(_rerank_fake({}))
+    result = runner.invoke(cli.app, ["rerank", "just a query"])
+    assert result.exit_code != 0
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_rerank_reads_documents_from_file(patch_client, tmp_path):
+    captured = {}
+    patch_client(_rerank_fake(captured))
+    docs = tmp_path / "docs.txt"
+    docs.write_text("first doc\nsecond doc\n\nthird doc\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["rerank", "q", "--file", str(docs)])
+    assert result.exit_code == 0
+    assert captured["documents"] == ["first doc", "second doc", "third doc"]
+
+
+def test_rerank_docs_and_file_both_given_errors_clean(patch_client, tmp_path):
+    captured = {}
+    patch_client(_rerank_fake(captured))
+    docs = tmp_path / "docs.txt"
+    docs.write_text("from file\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["rerank", "q", "positional doc", "--file", str(docs)])
+    assert result.exit_code == 2
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+    assert "query" not in captured  # no metered call was made
+
+
+def test_rerank_missing_file_errors_clean(patch_client, tmp_path):
+    patch_client(_rerank_fake({}))
+    result = runner.invoke(cli.app, ["rerank", "q", "--file", str(tmp_path / "nope.txt")])
+    assert result.exit_code == 2
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+
+
+# ── embed ────────────────────────────────────────────────────────────────
+def _embed_fake(captured, n=2, dim=4):
+    """Fake for the callable `client.embeddings` resource; records its args."""
+    emb = Embeddings({"object": "list",
+                      "data": [{"object": "embedding", "index": i,
+                                "embedding": [0.5] * dim} for i in range(n)],
+                      "usage": {"prompt_tokens": 42, "total_tokens": 42}})
+
+    def _embeddings(input, *, input_type=None):
+        captured.update(input=list(input), input_type=input_type)
+        return emb
+
+    return _fake_client(embeddings=_embeddings)
+
+
+def test_embed_renders_table_and_metering(patch_client):
+    captured = {}
+    patch_client(_embed_fake(captured))
+    result = runner.invoke(cli.app, ["embed", "alpha text", "beta", "--type", "query"])
+    assert result.exit_code == 0
+    assert "4" in result.output  # vector dim
+    assert "2 texts, 42 prompt tokens (metered per input token)" in result.output
+    # Vectors never reach the table.
+    assert "0.5" not in result.output
+    assert captured["input"] == ["alpha text", "beta"]
+    assert captured["input_type"] == "query"
+
+
+def test_embed_file_and_out_writes_jsonl(patch_client, tmp_path):
+    captured = {}
+    patch_client(_embed_fake(captured))
+    src = tmp_path / "texts.txt"
+    src.write_text("line one\nline two\n", encoding="utf-8")
+    dest = tmp_path / "vecs.jsonl"
+    result = runner.invoke(cli.app, ["embed", "--file", str(src), "--out", str(dest)])
+    assert result.exit_code == 0
+    assert captured["input"] == ["line one", "line two"]
+    assert captured["input_type"] == "document"  # the default side
+    rows = [json.loads(ln) for ln in dest.read_text(encoding="utf-8").splitlines()]
+    assert [r["index"] for r in rows] == [0, 1]
+    assert rows[0]["vector"] == [0.5] * 4
+
+
+def test_embed_json(patch_client):
+    captured = {}
+    patch_client(_embed_fake(captured))
+    result = runner.invoke(cli.app, ["--json", "embed", "some text"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["usage"]["prompt_tokens"] == 42
+    assert len(parsed["data"]) == 2
+
+
+def test_embed_no_texts_errors_clean(patch_client):
+    patch_client(_embed_fake({}))
+    result = runner.invoke(cli.app, ["embed"])
+    assert result.exit_code != 0
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_embed_texts_and_file_both_given_errors_clean(patch_client, tmp_path):
+    captured = {}
+    patch_client(_embed_fake(captured))
+    src = tmp_path / "texts.txt"
+    src.write_text("from file\n", encoding="utf-8")
+    result = runner.invoke(cli.app, ["embed", "positional", "--file", str(src)])
+    assert result.exit_code == 2
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+    assert "input" not in captured  # no metered call was made
+
+
+def test_embed_bad_type_errors_clean(patch_client):
+    captured = {}
+    patch_client(_embed_fake(captured))
+    result = runner.invoke(cli.app, ["embed", "text", "--type", "passage"])
+    assert result.exit_code == 2
+    assert "error:" in result.output
+    assert "Traceback" not in result.output
+    assert "input" not in captured  # rejected before the metered call
+
+
+def test_embed_unwritable_out_errors_clean(patch_client, tmp_path):
+    patch_client(_embed_fake({}))
+    dest = tmp_path / "no-such-dir" / "vecs.jsonl"
+    result = runner.invoke(cli.app, ["embed", "text", "--out", str(dest)])
+    assert result.exit_code == 2
+    assert "error:" in result.output
+    assert "Traceback" not in result.output

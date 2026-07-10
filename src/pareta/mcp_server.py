@@ -109,8 +109,9 @@ def match_task(query: str, top_k: int = 5) -> dict[str, Any]:
 @mcp.tool()
 @_guard
 def list_tasks() -> dict[str, Any]:
-    """List every benchmarked task in the Pareta catalog (id, scorer, whether it
-    takes a document/image input). Browse this to find a task to eval on."""
+    """List every grading contract (benchmarked task) in the Pareta catalog
+    (id, scorer, whether it takes a document/image input). Browse this when
+    building an eval."""
     tasks = _client().tasks.list()
     return {"tasks": [t.to_dict() for t in tasks]}
 
@@ -126,9 +127,9 @@ def get_task(task_id: str) -> dict[str, Any]:
 @mcp.tool()
 @_guard
 def list_models() -> dict[str, Any]:
-    """List the models your org can reach right now. Each `id` is usable as the
-    `model` argument to `chat` (OpenAI-compatible), though `model="auto"` — the
-    routing brain — is the recommended surface."""
+    """List the models visible to your org. Informational: these ids show up
+    as eval baselines and in results. Inference goes to `chat` with
+    model="auto" — standard orgs cannot call other ids directly."""
     models = _client().models.list()
     return {"data": [m.to_dict() for m in models.data]}
 
@@ -188,9 +189,9 @@ def chat(prompt: str, model: str = "auto") -> dict[str, Any]:
 
     The DEFAULT `model="auto"` is Pareta's routing brain — it plans the
     request, routes each part to the cheapest model that holds frontier-grade
-    quality, verifies, and answers. This is the recommended way to call
-    Pareta. Pass a specific model id (from `list_models`) only when you
-    deliberately want one model. METERED: a successful completion debits the
+    quality, verifies, and answers. "auto" is the inference surface — other
+    model ids only work for orgs with the direct-model entitlement.
+    METERED: a successful completion debits the
     org balance (a failed one bills $0).
     Returns `{"text": …, "model": …, "usage": …}`.
     """

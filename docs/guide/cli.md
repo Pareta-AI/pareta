@@ -103,6 +103,17 @@ pareta auto compare "Summarize this clause: …" --frontier claude-sonnet-4-6
 
 `metrics` is read-only and free. `compare` is metered — it makes two real calls, one to `auto` and one to the vendor at the vendor's actual token cost (a failed vendor call bills $0). Allowed vendors: `gpt-5.5`, `gemini-3-5-flash`, `gemini-3-1-pro`, `claude-sonnet-4-6`.
 
+### `rerank` + `embed` — the retrieval lanes
+
+```bash
+pareta rerank "governing law" "clause one…" "clause two…" --top-n 3   # docs as arguments
+pareta rerank "governing law" --file docs.txt                         # or one document per line
+pareta embed "what governs this contract?" --type query              # query-side vector
+pareta embed --file passages.txt --out vectors.jsonl                  # document vectors → JSONL
+```
+
+`rerank` scores every document against the query (calibrated 0–1 scores, best first; `--top-n` only truncates the output) — metered per document scored. `embed` returns unit-normalized vectors; the table shows sizes only, so grab the vectors with `--out` (JSONL rows `{"index", "vector"}`) or `--json` — metered per input token.
+
 ### `audio` — speech in and out
 
 ```bash
