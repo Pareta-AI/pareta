@@ -36,6 +36,17 @@ q = pa.embeddings("which state's law applies?", input_type="query").vectors[0]
 best = max(range(len(docs)), key=lambda i: sum(a * b for a, b in zip(q, doc_vecs[i])))
 ```
 
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const docVecs = (await pa.embeddings(docs)).vectors;
+const q = (await pa.embeddings("which state's law applies?", { inputType: "query" })).vectors[0];
+// unit vectors: cosine is a plain dot product
+const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+const best = docVecs.reduce((bi, v, i) => (dot(q, v) > dot(q, docVecs[bi]) ? i : bi), 0);
+```
+
 ## embeddings()
 
 ```python

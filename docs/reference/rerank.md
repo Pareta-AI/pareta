@@ -45,6 +45,16 @@ ranked.results[0].relevance_score  # calibrated P(relevant), e.g. 0.97
 ranked.top_documents(docs)[0]      # the winning text itself
 ```
 
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const ranked = await pa.rerank("Which state's law governs this contract?", docs);
+ranked.results[0].index;           // position in YOUR docs array
+ranked.results[0].relevanceScore;  // calibrated P(relevant)
+ranked.topDocuments(docs)[0];      // the winning text itself
+```
+
 ## rerank()
 
 ```python
