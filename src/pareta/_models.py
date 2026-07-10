@@ -328,6 +328,67 @@ class Speech(_Base):
         return self
 
 
+class RerankResult(_Base):
+    """One row of `Rerank.results` — a document's position + score."""
+
+    @property
+    def index(self) -> int:
+        """Position of this document in YOUR request's documents list."""
+        return int(self._raw.get("index", -1))
+
+    @property
+    def relevance_score(self) -> float:
+        """Calibrated P(relevant) in (0, 1) — thresholdable, not just ordinal."""
+        return float(self._raw.get("relevance_score", 0.0))
+
+
+class Rerank(_Base):
+    """Document-reranking result from `rerank(...)`. `.results` are ordered
+    most-relevant-first; `.pairs` is the number of documents scored (the
+    metered unit)."""
+
+    @property
+    def results(self) -> list[RerankResult]:
+        return [RerankResult(r) for r in self._raw.get("results", [])]
+
+    @property
+    def model(self) -> str | None:
+        return self._raw.get("model")
+
+    @property
+    def pairs(self) -> int | None:
+        return self._raw.get("pairs")
+
+    def top_documents(self, documents: list[str]) -> list[str]:
+        """Map the ranked indices back onto the documents you sent —
+        the winning texts, best first."""
+        return [documents[r.index] for r in self.results
+                if 0 <= r.index < len(documents)]
+
+
+class Embeddings(_Base):
+    """Embedding result from `embeddings(...)`. `.vectors` are unit-normalized
+    (cosine similarity is a plain dot product), in your input order;
+    `.prompt_tokens` is the metered unit."""
+
+    @property
+    def vectors(self) -> list[list[float]]:
+        rows = sorted(self._raw.get("data", []),
+                      key=lambda d: d.get("index", 0))
+        return [r.get("embedding") or [] for r in rows]
+
+    @property
+    def model(self) -> str | None:
+        return self._raw.get("model")
+
+    @property
+    def prompt_tokens(self) -> int | None:
+        return (self._raw.get("usage") or {}).get("prompt_tokens")
+
+    def __len__(self) -> int:
+        return len(self._raw.get("data", []))
+
+
 # ── evals ─────────────────────────────────────────────────────────────
 class EvalSet(_Base):
     @property

@@ -7,6 +7,7 @@ Exposes Pareta as Model Context Protocol tools over stdio, auto-first:
   models on the user's own data), `auto_metrics`, `compare_frontier`
 - discovery: `match_task`, `list_tasks`, `get_task`, `list_models`
 - audio: `transcribe`, `speak`
+- retrieval: `rerank`, `embed`
 
 The agent calls these tools; the MCP client gates each call behind its own
 per-tool approval, which is the only guardrail on the metered verbs (chat,
@@ -248,6 +249,30 @@ def speak(text: str, voice: str | None = None, out_path: str = "speech.mp3") -> 
         "duration_s": speech.duration_s,
         "format": speech.format,
     }
+
+
+# ── rerank ─────────────────────────────────────────────────────────────────
+@mcp.tool()
+@_guard
+def rerank(query: str, documents: list[str], top_n: int | None = None) -> dict[str, Any]:
+    """Rank `documents` by relevance to `query` (document reranking). Returns
+    `{"results": [{"index", "relevance_score"}, ...]}` ordered most-relevant-
+    first; `index` points into YOUR documents list and scores are calibrated
+    P(relevant) in (0, 1). `top_n` truncates the response (all documents are
+    still scored). METERED per document scored."""
+    result = _client().rerank(query, documents, top_n=top_n)
+    return result.to_dict()
+
+
+@mcp.tool()
+@_guard
+def embed(texts: list[str], input_type: str | None = None) -> dict[str, Any]:
+    """Embed texts into unit-normalized vectors (semantic search / RAG
+    recall). `input_type="query"` for the search side, omit for documents.
+    Returns {"vectors": [[...], ...], "prompt_tokens": N}. METERED per
+    input token."""
+    result = _client().embeddings(texts, input_type=input_type)
+    return {"vectors": result.vectors, "prompt_tokens": result.prompt_tokens}
 
 
 def main() -> None:

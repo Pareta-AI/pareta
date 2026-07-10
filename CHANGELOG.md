@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 — 2026-07-10
+
+The Retrieval capability lanes — the standard RAG stack on Pareta:
+
+- **`pa.rerank(query, documents, top_n=None)`** — document reranking via
+  `POST /v1/rerank` (Cohere-shaped). Ordered `(index, relevance_score)`
+  results; scores are calibrated P(relevant), thresholdable. Served by
+  `pareta-rerank-1`; metered per document scored.
+- **`pa.embeddings(input, input_type=None)`** — text embeddings via
+  `POST /v1/embeddings` (OpenAI-shaped). Unit-normalized 1024-dim vectors;
+  `input_type="query"` embeds retrieval queries asymmetrically. Served by
+  `bge-1`; metered per input token ($0.01 / 1M).
+- New MCP tools `rerank` and `embed`; new reference docs for both lanes.
+- New response models `Rerank`, `RerankResult`, `Embeddings`.
+
+Both lanes are benchmarkable on your own graded relevance via the
+`document-reranking` and `text-embedding` catalog tasks (nDCG@10) — the
+benchmark rides the same serving bridges these methods call.
+
 ## 1.0.0 — 2026-07-08
 
 - Every POST now carries an `Idempotency-Key` header, generated once per

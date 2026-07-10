@@ -98,6 +98,8 @@ async def test_registers_expected_tools():
         "chat", "auto_metrics", "compare_frontier",
         # audio
         "transcribe", "speak",
+        # retrieval
+        "rerank", "embed",
     }
     assert names == expected, (
         f"missing: {expected - names}; unexpected: {names - expected}")

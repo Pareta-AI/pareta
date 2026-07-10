@@ -97,6 +97,7 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
     ]),
     ("Reference", "reference", [
         "client", "chat", "models", "tasks", "evals", "audio",
+        "rerank", "embeddings",
         "exceptions", "types", "http-api",
     ]),
 ]

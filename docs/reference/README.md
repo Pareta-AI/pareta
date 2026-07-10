@@ -13,6 +13,8 @@ Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the 
 - [tasks](./tasks.md) — `client.tasks`: `list`/`retrieve`/`match` with the `Task`/`TaskMatch` response models.
 - [evals](./evals.md) — `client.evals`: `sets`, `runs`, and `frontier_models`, with `frontier=` resolution, metering, and response-object tables.
 - [audio](./audio.md) — `client.audio`: `transcriptions` (speech-to-text) and `speech` (text-to-speech), the per-minute metering, and the `Transcription`/`Speech` response objects.
+- [rerank](./rerank.md) — `client.rerank`: rank documents by relevance to a query (per-document metering, calibrated scores, the `Rerank` response object).
+- [embeddings](./embeddings.md) — `client.embeddings`: unit-normalized text vectors for search/RAG recall (per-token metering, query vs document embedding, the `Embeddings` response object).
 
 ## Types and errors
 
