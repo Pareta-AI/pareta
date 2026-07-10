@@ -9,12 +9,11 @@ not chat — `asr` (speech-to-text) and `tts` (text-to-speech) — as two method
 
 Two facts set this namespace apart from the rest of the SDK:
 
-- **No endpoint, no `chat.completions`.** Unlike the chat-style capabilities,
-  Speech is not something you deploy. There is no endpoint id to manage and no
-  `chat.completions.create` call — `audio.transcriptions(...)` and
+- **Its own routes, not `chat.completions`.** Speech does not go through
+  `chat.completions.create` — `audio.transcriptions(...)` and
   `audio.speech(...)` hit their own dedicated routes directly. You never pick a
   voice model, a GPU, or a quantization; Pareta resolves the serving model behind
-  the lane.
+  the lane, exactly as `model="auto"` does for chat.
 - **Metered per minute of audio.** Both lanes are metered against your org
   balance by **audio duration** — input length for transcription, output length
   for synthesis — not by tokens. An empty balance raises
@@ -101,7 +100,7 @@ write a file.
 Metered per minute of **output** audio.
 
 ```python
-speech = pa.audio.speech("Pareta makes open models easy to deploy.")
+speech = pa.audio.speech("Pareta turns text into speech in one call.")
 speech.save("out.wav")
 
 print(speech.format)        # container/codec, e.g. "wav"
@@ -186,9 +185,7 @@ From `audio.speech`.
 - [`tasks`](./tasks.md): `tasks.match(...)` routes a free-text job to a
   capability lane (including `speech-to-text` / `text-to-speech`) when no
   benchmarked task fits.
-- [`chat`](./chat.md): the OpenAI-compatible inference surface for the chat-style
-  capabilities, metered the same way.
-- [`endpoints`](./endpoints.md): deploy and operate the chat-style models — Speech
-  needs none of this.
+- [`chat`](./chat.md): the OpenAI-compatible `model="auto"` inference surface for
+  the chat-style capabilities, metered the same way.
 - [Errors and metering](exceptions.md): `InsufficientCreditsError`, the per-minute
   metering, and the full exception hierarchy.

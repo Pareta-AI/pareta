@@ -25,7 +25,7 @@ from pareta import (
     NotFoundError,              # 404
     ConflictError,              # 409
     RateLimitError,             # 429
-    EndpointNotReadyError,      # 503 — endpoint stopped/cold/provider down
+    EndpointNotReadyError,      # 503 — a backend behind auto warming/briefly down
 )
 ```
 
@@ -45,7 +45,7 @@ import {
   NotFoundError,              // 404
   ConflictError,              // 409
   RateLimitError,             // 429
-  EndpointNotReadyError,      // 503 — endpoint stopped/cold/provider down
+  EndpointNotReadyError,      // 503 — a backend behind auto warming/briefly down
 } from "pareta";
 ```
 
@@ -82,10 +82,10 @@ meaning, not by sniffing integers.
 | 401 | `AuthenticationError` | API key missing or invalid |
 | 402 | `InsufficientCreditsError` | Org is out of balance; top up in the dashboard |
 | 403 | `PermissionDeniedError` | Authenticated, but not allowed to do this |
-| 404 | `NotFoundError` | Endpoint / eval set / run / task id does not exist |
-| 409 | `ConflictError` | Conflict (seed endpoint, transient lock/contention) |
+| 404 | `NotFoundError` | Task / eval set / run id does not exist |
+| 409 | `ConflictError` | Conflict (transient lock/contention) |
 | 429 | `RateLimitError` | Rate limited; honor `Retry-After` |
-| 503 | `EndpointNotReadyError` | Target endpoint is stopped, cold-starting, or its provider is down |
+| 503 | `EndpointNotReadyError` | A serving backend behind `auto` is warming or briefly unavailable |
 | other 5xx | `APIStatusError` | Generic server error |
 
 ## Reading an `APIStatusError`
@@ -101,7 +101,7 @@ from pareta import Pareta, APIStatusError
 
 with Pareta.from_env() as pa:
     try:
-        pa.endpoints.retrieve("ep_does_not_exist")
+        pa.tasks.retrieve("nonexistent-task")
     except APIStatusError as e:
         print(e.status_code)   # 404
         print(e.detail)        # server's `detail` string (or raw body)
@@ -116,7 +116,7 @@ import { Pareta, APIStatusError } from "pareta";
 
 const pa = Pareta.fromEnv();
 try {
-  await pa.endpoints.retrieve("ep_does_not_exist");
+  await pa.tasks.retrieve("nonexistent-task");
 } catch (e) {
   if (e instanceof APIStatusError) {
     console.log(e.status);     // 404
@@ -138,7 +138,7 @@ to let bubble up to a top-level `except ParetaError`.
 
 Both inference and evals are metered against your org's balance. A successful
 [`chat.completions.create()`](./inference.md) debits the balance; an
-[`evals.runs.create()`](evaluation.md) debits for the open and frontier compute it
+[`evals.runs.create()`](evaluation.md) debits for the auto and frontier compute it
 runs. When the balance can't cover the call, you get a 402. Top-up is
 browser-only — the SDK exposes no balance or payment surface — so the right move
 is to surface a clear message pointing at the dashboard.
@@ -151,7 +151,7 @@ from pareta import Pareta, InsufficientCreditsError
 with Pareta.from_env() as pa:
     try:
         resp = pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the parties."}],
         )
     except InsufficientCreditsError:
@@ -166,7 +166,7 @@ import { Pareta, InsufficientCreditsError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   const resp = await pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "Extract the parties." }],
   });
 } catch (e) {
@@ -179,7 +179,7 @@ try {
 
 ### `NotFoundError` (404) — wrong id
 
-A stale or mistyped endpoint id, eval set id, run id, or task id.
+A stale or mistyped task id, eval set id, or run id.
 
 **Python**
 
@@ -188,9 +188,11 @@ from pareta import Pareta, NotFoundError
 
 with Pareta.from_env() as pa:
     try:
-        ep = pa.endpoints.retrieve("ep_maybe_deleted")
+        task = pa.tasks.retrieve("nonexistent-task")
     except NotFoundError:
-        ep = pa.endpoints.deploy(task="contract-key-fields", wait=True)  # redeploy
+        match = pa.tasks.match("extract key fields from contracts")  # recover the real id
+        if match.chosen:
+            task = pa.tasks.retrieve(match.chosen.task_id)
 ```
 
 **TypeScript**
@@ -199,40 +201,47 @@ with Pareta.from_env() as pa:
 import { Pareta, NotFoundError } from "pareta";
 
 const pa = Pareta.fromEnv();
-let ep;
+let task;
 try {
-  ep = await pa.endpoints.retrieve("ep_maybe_deleted");
+  task = await pa.tasks.retrieve("nonexistent-task");
 } catch (e) {
   if (e instanceof NotFoundError) {
-    ep = await pa.endpoints.deploy({ task: "contract-key-fields", wait: true });  // redeploy
+    const match = await pa.tasks.match("extract key fields from contracts");  // recover the real id
+    if (match.chosen?.taskId) task = await pa.tasks.retrieve(match.chosen.taskId);
   } else {
     throw e;
   }
 }
 ```
 
-### `EndpointNotReadyError` (503) — endpoint not serving
+### `EndpointNotReadyError` (503) — a backend is still warming
 
-The endpoint exists but isn't serving yet: it's stopped, cold-starting, or the
-provider is briefly unavailable. The SDK already retries 503 a couple of times
-(see [Automatic retries](#automatic-retries)); if it still surfaces, start the
-endpoint and retry your call. Remember that hardware is fully managed —
-[`start()`](deploying-endpoints.md) takes no GPU knob, just the endpoint id.
+`auto` routes each request across serving backends that Pareta manages.
+Occasionally the one your request needs is warming up (a cold start) or briefly
+unavailable, and the request surfaces a 503. The SDK already retries 503 a
+couple of times (see [Automatic retries](#automatic-retries)), which absorbs
+most warm-ups; if it still surfaces, there is nothing to start or fix on your
+side — wait briefly and re-issue the request.
 
 **Python**
 
 ```python
+import time
+
 from pareta import Pareta, EndpointNotReadyError
 
 with Pareta.from_env() as pa:
     try:
         resp = pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "ping"}],
         )
     except EndpointNotReadyError:
-        pa.endpoints.start("ep_contract_kie")          # warm it back up
-        ep = pa.endpoints.retrieve("ep_contract_kie")  # poll until ep.is_live, then retry
+        time.sleep(10)                       # still warming after the SDK's own retries
+        resp = pa.chat.completions.create(   # same request, second pass
+            model="auto",
+            messages=[{"role": "user", "content": "ping"}],
+        )
 ```
 
 **TypeScript**
@@ -241,15 +250,18 @@ with Pareta.from_env() as pa:
 import { Pareta, EndpointNotReadyError } from "pareta";
 
 const pa = Pareta.fromEnv();
-try {
-  const resp = await pa.chat.completions.create({
-    model: "ep_contract_kie",
+const request = () =>
+  pa.chat.completions.create({
+    model: "auto",
     messages: [{ role: "user", content: "ping" }],
   });
+let resp;
+try {
+  resp = await request();
 } catch (e) {
   if (e instanceof EndpointNotReadyError) {
-    await pa.endpoints.start("ep_contract_kie");           // warm it back up
-    const ep = await pa.endpoints.retrieve("ep_contract_kie");  // poll until ep.isLive, then retry
+    await new Promise((r) => setTimeout(r, 10_000));  // still warming after the SDK's own retries
+    resp = await request();                           // same request, second pass
   } else {
     throw e;
   }
@@ -269,7 +281,7 @@ from pareta import Pareta, RateLimitError
 with Pareta.from_env() as pa:
     try:
         pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "hi"}],
         )
     except RateLimitError as e:
@@ -284,7 +296,7 @@ import { Pareta, RateLimitError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   await pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "hi" }],
   });
 } catch (e) {
@@ -335,7 +347,7 @@ they are programming errors, not server responses:
 
 - [`chat.completions.create()`](./inference.md) raises `ValueError` if `model`
   or `messages` is empty.
-- [`tasks.match()`](discovery.md) raises `ValueError` if `query` is empty.
+- [`tasks.match()`](../reference/tasks.md) raises `ValueError` if `query` is empty.
 - [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` is empty.
 - [`evals.runs.create()`](evaluation.md) raises `ValueError` if neither
   `eval_set=` nor `task=`+`items=` is supplied, and `ValueError`/`TypeError` if
@@ -396,8 +408,7 @@ const strict = Pareta.fromEnv({ maxRetries: 0 });
 
 Retries apply only to the initial handshake (connect and status line). Once SSE
 bytes are flowing — token chunks from a streamed
-[chat completion](./inference.md), or `progress`/`complete` events from a
-streamed [deploy](deploying-endpoints.md) — a mid-stream drop raises immediately, because
+[chat completion](./inference.md) — a mid-stream drop raises immediately, because
 the stream cannot be safely resumed. Catch it and restart the request from the
 top if you need to.
 
@@ -409,7 +420,7 @@ from pareta import Pareta, APIConnectionError
 with Pareta.from_env() as pa:
     try:
         for chunk in pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Summarize the contract."}],
             stream=True,
         ):
@@ -428,7 +439,7 @@ import { Pareta, APIConnectionError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   const stream = pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "Summarize the contract." }],
     stream: true,
   });
@@ -464,7 +475,7 @@ pa = Pareta.from_env(timeout=httpx.Timeout(120.0, connect=5.0))
 with pa:
     try:
         pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Write a long summary."}],
             max_tokens=4096,
         )
@@ -482,7 +493,7 @@ const pa = Pareta.fromEnv({ timeout: 120_000 });
 
 try {
   await pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "Write a long summary." }],
     max_tokens: 4096,
   });
@@ -514,7 +525,7 @@ with Pareta.from_env() as pa:
         run = pa.evals.runs.create(
             task="contract-key-fields",
             items=[{"input": "...", "expected": "..."}],
-            models=["contract-1", "contract-2"],
+            models=["auto"],
             frontier="benchmarked",
             wait=True,
             timeout=600.0,      # give up waiting after 10 minutes
@@ -535,7 +546,7 @@ try {
   const run = await pa.evals.runs.create({
     task: "contract-key-fields",
     items: [{ input: "...", expected: "..." }],
-    models: ["contract-1", "contract-2"],
+    models: ["auto"],
     frontier: "benchmarked",
     wait: true,
     timeout: 600,        // give up waiting after 10 minutes
@@ -571,14 +582,14 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         try:
             resp = await pa.chat.completions.create(
-                model="ep_contract_kie",
+                model="auto",
                 messages=[{"role": "user", "content": "Extract the parties."}],
             )
             print(resp.choices[0].message.content)
         except InsufficientCreditsError:
             print("Top up your org balance in the dashboard.")
         except EndpointNotReadyError:
-            await pa.endpoints.start("ep_contract_kie")
+            print("A backend behind auto is still warming — retry shortly.")
 
 asyncio.run(main())
 ```
@@ -595,7 +606,7 @@ async function main() {
   const pa = Pareta.fromEnv();
   try {
     const resp = await pa.chat.completions.create({
-      model: "ep_contract_kie",
+      model: "auto",
       messages: [{ role: "user", content: "Extract the parties." }],
     });
     console.log(resp.choices[0].message.content);
@@ -603,7 +614,7 @@ async function main() {
     if (e instanceof InsufficientCreditsError) {
       console.log("Top up your org balance in the dashboard.");
     } else if (e instanceof EndpointNotReadyError) {
-      await pa.endpoints.start("ep_contract_kie");
+      console.log("A backend behind auto is still warming — retry shortly.");
     } else {
       throw e;
     }
@@ -633,14 +644,14 @@ from pareta import (
 with Pareta.from_env() as pa:
     try:
         resp = pa.chat.completions.create(
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the parties."}],
         )
         print(resp.choices[0].message.content)
     except InsufficientCreditsError:
         print("Out of balance — top up in the dashboard.")
     except EndpointNotReadyError:
-        pa.endpoints.start("ep_contract_kie")  # warm it, then retry
+        print("A backend is still warming — wait briefly, then retry.")
     except RateLimitError:
         print("Rate limited after retries — back off and try again.")
     except APITimeoutError:
@@ -664,7 +675,7 @@ import {
 const pa = Pareta.fromEnv();
 try {
   const resp = await pa.chat.completions.create({
-    model: "ep_contract_kie",
+    model: "auto",
     messages: [{ role: "user", content: "Extract the parties." }],
   });
   console.log(resp.choices[0].message.content);
@@ -672,7 +683,7 @@ try {
   if (e instanceof InsufficientCreditsError) {
     console.log("Out of balance — top up in the dashboard.");
   } else if (e instanceof EndpointNotReadyError) {
-    await pa.endpoints.start("ep_contract_kie");  // warm it, then retry
+    console.log("A backend is still warming — wait briefly, then retry.");
   } else if (e instanceof RateLimitError) {
     console.log("Rate limited after retries — back off and try again.");
   } else if (e instanceof APITimeoutError) {
@@ -688,6 +699,5 @@ try {
 ## See also
 
 - [Inference](./inference.md) — OpenAI-compatible chat completions and streaming
-- [Endpoints](deploying-endpoints.md) — deploy, start, stop, and the `is_live` check
 - [Evals](evaluation.md) — eval sets, runs, `wait`, and `run.cost`
-- [Tasks](discovery.md) — the benchmark catalog and `match()`
+- [Tasks](../reference/tasks.md) — the benchmark catalog and `match()`

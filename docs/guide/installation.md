@@ -1,13 +1,13 @@
 # Installation & authentication
 
-The `pareta` package is the official client for [Pareta](https://pareta.ai), available for **Python** (`pip install pareta`) and **TypeScript/JavaScript** (`npm install pareta`). It runs metered OpenAI-compatible inference against `model="auto"` (Pareta's routing brain — nothing to deploy), evaluates models on your own data, browses the benchmark catalog, and deploys dedicated open-weights endpoints — all from code. This page gets you installed, authenticated, and making a first call.
+The `pareta` package is the official client for [Pareta](https://pareta.ai), available for **Python** (`pip install pareta`) and **TypeScript/JavaScript** (`npm install pareta`). It runs metered OpenAI-compatible inference against `model="auto"` (Pareta's routing brain — nothing to deploy, no model to pick), benchmarks auto against frontier models on your own data, and browses the task catalog — all from code. This page gets you installed, authenticated, and making a first call.
 
 A few platform truths to know up front, because they shape the whole API:
 
-- **GPUs are hidden.** You never pass a hardware knob. `endpoints.deploy()` takes a task and a model; Pareta resolves the serving class.
-- **Models are per-task aliases.** Open-weights ids are masked to public aliases. Real ids never cross the SDK boundary.
+- **GPUs are hidden.** You never pass a hardware knob. The serving stack behind `model="auto"` is Pareta's job, resolved per request.
+- **There is one model id.** `models.list()` returns exactly one entry — `"auto"`. Which model serves a request is Pareta's decision, made per request.
 - **Inference and evals are metered against your org balance.** A successful call debits credit; an empty balance raises `InsufficientCreditsError`. Top-up is browser-only — the SDK never touches billing.
-- **Inference is OpenAI-compatible.** A deployed endpoint speaks the OpenAI chat-completions wire format, so you can use this SDK or the stock `openai` client interchangeably.
+- **Inference is OpenAI-compatible.** The `/v1/chat/completions` endpoint speaks the OpenAI wire format, so you can use this SDK or the stock `openai` client interchangeably.
 
 ## Install
 
@@ -36,7 +36,7 @@ pip install "pareta[cli]"     # the `pareta` shell command
 pip install "pareta[mcp]"     # the `pareta-mcp` Model Context Protocol server
 ```
 
-The [CLI](cli.md) gives you the whole control plane as shell commands (`pareta endpoints deploy …`); the [MCP server](mcp.md) exposes it to an AI agent (Claude Desktop, Cursor) as tools. Both authenticate from the same `PARETA_API_KEY`. Each installs a console script, so an isolated install with [`pipx`](https://pipx.pypa.io) (`pipx install "pareta[cli]"`) keeps it off your project's dependency tree while still putting the command on your PATH.
+The [CLI](cli.md) gives you the same surface as shell commands (`pareta chat`, `pareta evals run`, …); the [MCP server](mcp.md) exposes it to an AI agent (Claude Desktop, Cursor) as tools. Both authenticate from the same `PARETA_API_KEY`. Each installs a console script, so an isolated install with [`pipx`](https://pipx.pypa.io) (`pipx install "pareta[cli]"`) keeps it off your project's dependency tree while still putting the command on your PATH.
 
 ## Authenticate
 
@@ -57,7 +57,7 @@ from pareta import Pareta
 
 pa = Pareta.from_env()                       # reads PARETA_API_KEY (+ PARETA_BASE_URL)
 
-# List the deployed endpoints your org can call.
+# List the model catalog — exactly one entry: "auto".
 for model in pa.models.list():
     print(model.id, model.owned_by)
 ```
@@ -69,7 +69,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();                  // reads PARETA_API_KEY (+ PARETA_BASE_URL)
 
-// List the deployed endpoints your org can call.
+// List the model catalog — exactly one entry: "auto".
 for (const model of await pa.models.list()) {
   console.log(model.id, model.ownedBy);
 }
@@ -165,7 +165,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     resp = pa.chat.completions.create(
-        model="ep_invoice_extract",          # an endpoint id from pa.models.list() or endpoints.deploy()
+        model="auto",                        # the one model id — Pareta routes the request
         messages=[{"role": "user", "content": "Extract the total from this invoice: ..."}],
     )
     print(resp.choices[0].message.content)
@@ -178,7 +178,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_extract",            // an endpoint id from pa.models.list() or endpoints.deploy()
+  model: "auto",                          // the one model id — Pareta routes the request
   messages: [{ role: "user", content: "Extract the total from this invoice: ..." }],
 });
 console.log(resp.choices[0].message.content);
@@ -199,7 +199,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         resp = await pa.chat.completions.create(
-            model="ep_invoice_extract",
+            model="auto",
             messages=[{"role": "user", "content": "Summarize this contract clause: ..."}],
         )
         print(resp.choices[0].message.content)
@@ -216,7 +216,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_extract",
+  model: "auto",
   messages: [{ role: "user", content: "Summarize this contract clause: ..." }],
 });
 console.log(resp.choices[0].message.content);
@@ -235,7 +235,7 @@ pa = Pareta.from_env()
 
 try:
     resp = pa.chat.completions.create(
-        model="ep_invoice_extract",
+        model="auto",
         messages=[{"role": "user", "content": "What is the invoice number?"}],
         temperature=0,                       # extra OpenAI params pass straight through
     )
@@ -254,7 +254,7 @@ const pa = Pareta.fromEnv();
 
 try {
   const resp = await pa.chat.completions.create({
-    model: "ep_invoice_extract",
+    model: "auto",
     messages: [{ role: "user", content: "What is the invoice number?" }],
     temperature: 0,                        // extra OpenAI params pass straight through
   });
@@ -269,11 +269,11 @@ try {
 }
 ```
 
-The `model` is an endpoint id — anything from `pa.models.list()` or returned by `endpoints.deploy()`. See [Inference](./inference.md) for streaming and the full chat-completions surface.
+The `model` is `"auto"` — the only model id there is. One request, one debit, however many internal model calls Pareta's plan makes. See [Inference](./inference.md) for streaming and the full chat-completions surface.
 
 ## Zero-install alternative for inference
 
-You do not need this SDK to *call* a deployed endpoint. Because inference is OpenAI-compatible, you can point the stock `openai` client at Pareta's `base_url` and use the same `pareta_sk_` key:
+You do not need this SDK to run inference at all. Because it's OpenAI-compatible, you can point the stock `openai` client at Pareta's `base_url` with the same `pareta_sk_` key and call `model="auto"` — there is nothing to set up first:
 
 **Python**
 
@@ -283,7 +283,7 @@ from openai import OpenAI
 client = OpenAI(api_key="pareta_sk_...", base_url="https://api.pareta.ai/v1")
 
 resp = client.chat.completions.create(
-    model="ep_invoice_extract",
+    model="auto",
     messages=[{"role": "user", "content": "What is the invoice number?"}],
 )
 print(resp.choices[0].message.content)
@@ -297,21 +297,20 @@ import OpenAI from "openai";
 const client = new OpenAI({ apiKey: "pareta_sk_...", baseURL: "https://api.pareta.ai/v1" });
 
 const resp = await client.chat.completions.create({
-  model: "ep_invoice_extract",
+  model: "auto",
   messages: [{ role: "user", content: "What is the invoice number?" }],
 });
 console.log(resp.choices[0].message.content);
 ```
 
-This is handy for inference-only workloads or dropping Pareta into an existing OpenAI codebase. The `pareta` SDK's distinct value is the **control plane** that the OpenAI client cannot reach: deploying and operating endpoints, browsing the benchmark catalog, and running evals against your own data.
+This is handy for inference-only workloads or dropping Pareta into an existing OpenAI codebase. The `pareta` SDK's distinct value is everything around that call that the OpenAI client cannot reach: matching intent to tasks, benchmarking `"auto"` against frontier models on your own data, and reading auto's metrics.
 
 ## Next steps
 
 - [Inference](./inference.md) — chat completions, streaming, and metering.
-- [Deploying endpoints](deploying-endpoints.md) — `endpoints.deploy()`, lifecycle, and metrics (no GPU knob).
-- [Tasks & the catalog](discovery.md) — discover benchmark tasks and the `recommended` model alias.
-- [Evals](evaluation.md) — build eval sets and run open vs. frontier comparisons.
+- [Core concepts](./core-concepts.md) — tasks, `model="auto"`, and how requests are planned, routed, and billed.
+- [Evals](evaluation.md) — build eval sets and benchmark `"auto"` against frontier baselines.
 - [Errors & retries](errors-and-retries.md) — the typed exception hierarchy and retry policy.
-- [The `pareta` CLI](cli.md) — the same control plane from your shell (`pip install "pareta[cli]"`).
+- [The `pareta` CLI](cli.md) — the same surface from your shell (`pip install "pareta[cli]"`).
 - [MCP server](mcp.md) — drive Pareta from an AI agent (Claude Code, Codex, Claude Desktop, Cursor) over MCP (`pip install "pareta[mcp]"`).
 - [The `/pareta` skill](skill.md) — a slash-command `SKILL.md` for Claude Code and Codex that drives the CLI.

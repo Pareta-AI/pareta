@@ -1,12 +1,12 @@
 # The `/pareta` skill
 
-A [Pareta skill](https://github.com/Pareta-AI/pareta/blob/main/skills/pareta/SKILL.md) teaches an AI coding agent to drive the `pareta` CLI as a slash command — match a task to an open-weights model, deploy it (Pareta picks the GPU), run metered inference, and benchmark models on your own data. It's a single `SKILL.md` that works in both Claude Code and Codex, because they share the same skill format.
+A [Pareta skill](https://github.com/Pareta-AI/pareta/blob/main/skills/pareta/SKILL.md) teaches an AI coding agent to drive the `pareta` CLI as a slash command — run metered inference against `model="auto"`, match plain-language intent to a benchmarked task, and benchmark auto against frontier models on your own data. It's a single `SKILL.md` that works in both Claude Code and Codex, because they share the same skill format.
 
 ## Skill vs. MCP server
 
 Two ways to put Pareta inside a coding agent — and you can use both:
 
-- **The [MCP server](mcp.md)** gives the agent Pareta's control plane as structured **tools** (`deploy_endpoint`, `run_eval`, …) it calls directly. Best when you want first-class, auto-discovered tools.
+- **The [MCP server](mcp.md)** gives the agent Pareta as structured **tools** (`chat`, `run_eval`, …) it calls directly. Best when you want first-class, auto-discovered tools.
 - **This skill** is **instructions** — a `SKILL.md` the agent reads and follows, driving the `pareta` shell command. Best when you want a `/pareta` slash command and a guided workflow, and you've already installed the CLI.
 
 ## Prerequisite
@@ -44,15 +44,14 @@ For a single repo, check it in at `.codex/skills/pareta/SKILL.md`. Codex loads s
 
 ## What it does
 
-Once installed, ask in plain language — *"find the cheapest open model that extracts key fields from contracts and deploy it."* The skill walks the agent through:
+Once installed, ask in plain language — *"check whether Pareta can extract key fields from contracts, prove it on my rows, then run it."* The skill walks the agent through:
 
-1. `pareta tasks match` — resolve the intent to a benchmarked task.
-2. `pareta tasks leaderboard` — rank open models, the recommended pick, and frontier savings.
-3. `pareta endpoints deploy --wait` — stand up the endpoint (Pareta picks the GPU).
-4. `pareta chat` — run inference; `pareta evals run` — benchmark on your own JSONL data.
-5. `pareta endpoints stop` / `cost` / `metrics` — operate and clean up.
+1. `pareta tasks match` — resolve the intent to a benchmarked task, a capability, or an honest `unsupported`.
+2. `pareta chat` — run inference against `model="auto"` (Pareta plans, routes, verifies, and falls back to frontier when needed).
+3. `pareta evals run --models auto --frontier` — benchmark auto against frontier baselines on your own JSONL data.
+4. `pareta auto metrics` / `pareta auto compare` — watch spend + projected savings, and run one-prompt frontier side-by-sides.
 
-It bakes in the guardrails: deploy / inference / eval **spend your org balance**, so the agent confirms before provisioning or spending, and stops endpoints it deployed when the work is done.
+It bakes in the guardrails: inference / eval / compare **spend your org balance**, so the agent confirms before spending.
 
 ## Next steps
 

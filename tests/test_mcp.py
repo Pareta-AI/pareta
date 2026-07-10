@@ -56,23 +56,6 @@ class _FakeTasks:
     def list(self):
         return [_Obj({"id": "invoice-extraction"}), _Obj({"id": "text-to-sql"})]
 
-    def leaderboard(self, task_id):
-        return _Obj({"task_id": task_id, "recommended": "qwen-1", "models": []})
-
-    def recommended(self, task_id):
-        return "qwen-1"
-
-
-class _FakeEndpoints:
-    def __init__(self):
-        self.deleted: list[str] = []
-
-    def list(self):
-        return [_Obj({"id": "ep_1", "status": "live"})]
-
-    def delete(self, endpoint_id):
-        self.deleted.append(endpoint_id)
-
 
 class _FakeCompletions:
     def create(self, *, model, messages, **kwargs):
@@ -87,7 +70,6 @@ class _FakeChat:
 class _FakeClient:
     def __init__(self, *, tasks=None):
         self.tasks = tasks or _FakeTasks()
-        self.endpoints = _FakeEndpoints()
         self.chat = _FakeChat()
 
 
@@ -109,21 +91,32 @@ async def test_registers_expected_tools():
     names = {t.name for t in tools}
     expected = {
         # discovery
-        "match_task", "list_tasks", "get_task", "get_leaderboard",
-        "recommended_model", "list_models",
-        # provisioning
-        "deploy_endpoint", "list_endpoints", "get_endpoint", "start_endpoint",
-        "stop_endpoint", "delete_endpoint", "endpoint_metrics", "endpoint_cost",
+        "match_task", "list_tasks", "get_task", "list_models",
         # eval
         "run_eval", "get_eval_run",
-        # inference
-        "chat",
+        # inference + auto
+        "chat", "auto_metrics", "compare_frontier",
         # audio
         "transcribe", "speak",
     }
-    assert expected <= names, f"missing tools: {expected - names}"
+    assert names == expected, (
+        f"missing: {expected - names}; unexpected: {names - expected}")
     # every registered tool carries a non-empty description (the agent reads it)
     assert all(t.description for t in tools)
+
+
+@pytest.mark.asyncio
+async def test_dropped_tools_are_gone():
+    """1.0.0 removed the leaderboard/recommended discovery tools and the whole
+    endpoint provisioning surface — none may register."""
+    tools = await mcp_server.mcp.list_tools()
+    names = {t.name for t in tools}
+    dropped = {
+        "get_leaderboard", "recommended_model",
+        "deploy_endpoint", "list_endpoints", "get_endpoint", "start_endpoint",
+        "stop_endpoint", "delete_endpoint", "endpoint_metrics", "endpoint_cost",
+    }
+    assert not (dropped & names), f"dropped tools still registered: {dropped & names}"
 
 
 # ── representative tool bodies ───────────────────────────────────────────────
@@ -142,14 +135,6 @@ def test_chat_returns_assistant_text(monkeypatch):
     assert out["text"] == "hello from ep_1"
     assert out["model"] == "ep_fake"
     assert out["usage"]["total_tokens"] == 8
-
-
-def test_delete_endpoint_returns_id(monkeypatch):
-    client = _FakeClient()
-    _patch_client(monkeypatch, client)
-    out = mcp_server.delete_endpoint("ep_9")
-    assert out == {"deleted": "ep_9"}
-    assert client.endpoints.deleted == ["ep_9"]
 
 
 # ── error handling: ParetaError is surfaced, never raised ────────────────────

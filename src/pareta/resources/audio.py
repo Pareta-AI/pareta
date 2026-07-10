@@ -1,7 +1,7 @@
 """`client.audio` — the Speech capability lanes (ASR + TTS).
 
-Unlike chat-style capabilities these are NOT deployed as endpoints and NOT
-called through `chat.completions`; they have dedicated routes:
+Unlike chat-style capabilities these are NOT called through
+`chat.completions`; they have dedicated routes:
 
   POST /v1/audio/transcriptions  {audio_base64, language?} -> {text, language, duration_s}
   POST /v1/audio/speech          {text, voice?}            -> {audio_base64, sample_rate, duration_s, format}

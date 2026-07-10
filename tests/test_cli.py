@@ -15,7 +15,6 @@ from typer.testing import CliRunner
 import pareta
 from pareta import (
     ChatCompletion,
-    Endpoint,
     ModelList,
     Task,
     TaskMatch,
@@ -113,42 +112,86 @@ def test_models_list_renders(patch_client):
     assert "ep_abc" in result.output
 
 
-# ── endpoints ────────────────────────────────────────────────────────────
-def test_endpoints_list_renders(patch_client):
-    endpoints = [
-        Endpoint({"id": "ep_abc", "status": "live", "taskName": "contract-kie", "model": "contract-1"}),
-        Endpoint({"id": "ep_def", "status": "stopped", "taskName": "text-to-sql", "model": "sql-1"}),
-    ]
-    patch_client(_fake_client(endpoints=_ns(list=lambda: endpoints)))
-    result = runner.invoke(cli.app, ["endpoints", "list"])
+# ── dropped surfaces (1.0.0: auto-only) ──────────────────────────────────
+def test_dropped_commands_are_gone(patch_client):
+    """The endpoints group and tasks leaderboard/recommended were REMOVED in
+    1.0.0 — invoking them must fail as unknown commands, not run."""
+    patch_client(_fake_client())
+    for args in (["endpoints", "list"],
+                 ["endpoints", "deploy", "--task", "t"],
+                 ["tasks", "leaderboard", "t"],
+                 ["tasks", "recommended", "t"]):
+        result = runner.invoke(cli.app, args)
+        assert result.exit_code != 0, f"{args} unexpectedly succeeded"
+
+
+# ── auto ─────────────────────────────────────────────────────────────────
+def test_auto_metrics_renders(patch_client):
+    metrics = {"requests_30d": 42, "success_rate_30d": 0.984,
+               "billed_micro_usd_30d": 123456,
+               "savings_vs_frontier_micro_usd_30d": 6543210,
+               "savings_multiple_30d": 53}
+    patch_client(_fake_client(auto=_ns(metrics=lambda: metrics)))
+    result = runner.invoke(cli.app, ["auto", "metrics"])
     assert result.exit_code == 0
-    assert "ep_abc" in result.output
-    assert "live" in result.output
+    assert "42" in result.output
+    assert "98.4%" in result.output
 
 
-def test_endpoints_delete_aborts_without_confirmation(patch_client):
-    deleted = {"called": False}
-
-    def _delete(endpoint_id):
-        deleted["called"] = True
-
-    patch_client(_fake_client(endpoints=_ns(delete=_delete)))
-    # Answer the confirm prompt with "n" → abort, nothing deleted.
-    result = runner.invoke(cli.app, ["endpoints", "delete", "ep_abc"], input="n\n")
-    assert result.exit_code != 0
-    assert deleted["called"] is False
-
-
-def test_endpoints_delete_with_yes(patch_client):
-    deleted = {"id": None}
-
-    def _delete(endpoint_id):
-        deleted["id"] = endpoint_id
-
-    patch_client(_fake_client(endpoints=_ns(delete=_delete)))
-    result = runner.invoke(cli.app, ["endpoints", "delete", "ep_abc", "--yes"])
+def test_auto_metrics_json(patch_client):
+    metrics = {"requests_30d": 7, "success_rate_30d": 1.0}
+    patch_client(_fake_client(auto=_ns(metrics=lambda: metrics)))
+    result = runner.invoke(cli.app, ["--json", "auto", "metrics"])
     assert result.exit_code == 0
-    assert deleted["id"] == "ep_abc"
+    parsed = json.loads(result.stdout)
+    assert parsed["requests_30d"] == 7
+
+
+def _compare_fakes(captured):
+    """Fake client for `auto compare`: one chat call (model:auto) plus one
+    frontier comparison call."""
+    resp = ChatCompletion({
+        "choices": [{"message": {"role": "assistant", "content": "auto answer"}}],
+    })
+    frontier = {"model": "gpt-5.5", "content": "frontier answer",
+                "cost_micro_usd": 1234, "latency_ms": 2100}
+
+    def _create(*, model, messages, **kw):
+        captured["chat_model"] = model
+        captured["prompt"] = messages[0]["content"]
+        return resp
+
+    def _compare_frontier(*, model, messages):
+        captured["frontier_model"] = model
+        return frontier
+
+    return _fake_client(chat=_ns(completions=_ns(create=_create)),
+                        auto=_ns(compare_frontier=_compare_frontier))
+
+
+def test_auto_compare_renders(patch_client):
+    captured = {}
+    patch_client(_compare_fakes(captured))
+    result = runner.invoke(cli.app, ["auto", "compare", "which is best?",
+                                     "--frontier", "gpt-5.5"])
+    assert result.exit_code == 0
+    assert "auto answer" in result.output
+    assert "frontier answer" in result.output
+    assert captured["chat_model"] == "auto"
+    assert captured["prompt"] == "which is best?"
+    assert captured["frontier_model"] == "gpt-5.5"
+
+
+def test_auto_compare_json(patch_client):
+    """Regression: pre-1.0.0 the --json branch referenced a nonexistent
+    `state.json_output` / `_print_json` and crashed."""
+    captured = {}
+    patch_client(_compare_fakes(captured))
+    result = runner.invoke(cli.app, ["--json", "auto", "compare", "which is best?"])
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["auto"]["content"] == "auto answer"
+    assert parsed["frontier"]["model"] == "gpt-5.5"
 
 
 # ── chat ─────────────────────────────────────────────────────────────────

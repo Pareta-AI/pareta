@@ -10,7 +10,7 @@ async.
 This page shows how to:
 
 - run a batch of `chat.completions` concurrently and collect results
-- bound concurrency so you do not hammer an endpoint (backpressure)
+- bound concurrency so you do not hammer the API (backpressure)
 - handle errors per task so one failure does not sink the batch
 - launch and await several eval runs at once
 
@@ -27,7 +27,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:   # reads PARETA_API_KEY
         resp = await pa.chat.completions.create(
-            model="ep_invoice_extract",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the total."}],
         )
         print(resp.choices[0].message.content)
@@ -47,18 +47,18 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();                  // reads PARETA_API_KEY
 
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_extract",
+  model: "auto",
   messages: [{ role: "user", content: "Extract the total." }],
 });
 console.log(resp.choices[0].message.content);
 ```
 
 Inference is OpenAI-compatible and metered: each successful completion debits
-your org balance, and a zero balance raises `InsufficientCreditsError` (402).
-Top-up is browser-only, so the SDK never exposes balance or payment. `model` is
-an endpoint id from [`endpoints.deploy()`](../guide/deploying-endpoints.md) (or any model
-id your org can reach); Pareta hides the hardware, so there is no GPU knob to
-pass.
+your org balance — one debit per request, no matter how many internal model
+calls auto's plan makes — and a zero balance raises `InsufficientCreditsError`
+(402). Top-up is browser-only, so the SDK never exposes balance or payment.
+`model` is always `"auto"`: Pareta picks the model per request and hides the
+hardware, so there is no model or GPU knob to pass.
 
 ## Fan out a batch of completions
 
@@ -81,7 +81,7 @@ PROMPTS = [
 
 async def classify_one(pa, prompt, document):
     resp = await pa.chat.completions.create(
-        model="ep_invoice_extract",
+        model="auto",
         messages=[
             {"role": "system", "content": "You are an invoice parser."},
             {"role": "user", "content": f"{prompt}\n\n{document}"},
@@ -121,7 +121,7 @@ const PROMPTS = [
 
 async function classifyOne(pa: Pareta, prompt: string, document: string) {
   const resp = await pa.chat.completions.create({
-    model: "ep_invoice_extract",
+    model: "auto",
     messages: [
       { role: "system", content: "You are an invoice parser." },
       { role: "user", content: `${prompt}\n\n${document}` },
@@ -149,10 +149,9 @@ both halves of the problem: capacity (backpressure) and partial failure.
 ## Bound concurrency with a semaphore
 
 Firing 5,000 prompts at `gather` opens as many tasks at once, overruns the
-connection pool, and is the fastest way to earn a `RateLimitError` (429) or push
-a cold endpoint into `EndpointNotReadyError` (503). An `asyncio.Semaphore` caps
-how many calls are in flight at any moment. The rest queue and drain as slots
-free up.
+connection pool, and is the fastest way to earn a `RateLimitError` (429). An
+`asyncio.Semaphore` caps how many calls are in flight at any moment. The rest
+queue and drain as slots free up.
 
 **Python**
 
@@ -165,7 +164,7 @@ MAX_IN_FLIGHT = 16
 async def complete(pa, sem, messages):
     async with sem:                       # acquire a slot; release on exit
         resp = await pa.chat.completions.create(
-            model="ep_invoice_extract",
+            model="auto",
             messages=messages,
             temperature=0,
         )
@@ -198,7 +197,7 @@ const MAX_IN_FLIGHT = 16;
 
 async function complete(pa: Pareta, messages: Array<{ role: string; content: string }>) {
   const resp = await pa.chat.completions.create({
-    model: "ep_invoice_extract",
+    model: "auto",
     messages,
     temperature: 0,
   });
@@ -229,9 +228,9 @@ const results = await runBatch(docs);
 console.log(results.length);
 ```
 
-Pick `MAX_IN_FLIGHT` to match what the endpoint can sustain. 8 to 32 is a sane
-starting band; tune it against the endpoint's latency from
-[`endpoints.metrics()`](cost-and-metrics.md). The SDK already retries `429`,
+Pick `MAX_IN_FLIGHT` to match your traffic. 8 to 32 is a sane starting band;
+tune it against the hourly p50/p95 latency buckets from
+[`auto.metrics()`](cost-and-metrics.md). The SDK already retries `429`,
 `503`, and `5xx` with exponential backoff (`max_retries`, default 2), so the
 semaphore is your first line of defense and retries are the backstop.
 
@@ -259,7 +258,7 @@ MAX_IN_FLIGHT = 16
 async def complete(pa, sem, doc):
     async with sem:
         resp = await pa.chat.completions.create(
-            model="ep_invoice_extract",
+            model="auto",
             messages=[{"role": "user", "content": f"Extract the total from:\n{doc}"}],
             temperature=0,
         )
@@ -287,7 +286,7 @@ async def main(documents):
     print(f"{len(ok)} succeeded, {len(failed)} failed")
     for doc, err in failed:
         if isinstance(err, EndpointNotReadyError):
-            reason = "endpoint cold/stopped"      # 503
+            reason = "backend warming"            # 503
         elif isinstance(err, RateLimitError):
             reason = "rate limited after retries"  # 429
         elif isinstance(err, APITimeoutError):
@@ -322,7 +321,7 @@ const MAX_IN_FLIGHT = 16;
 
 async function complete(pa: Pareta, doc: string) {
   const resp = await pa.chat.completions.create({
-    model: "ep_invoice_extract",
+    model: "auto",
     messages: [{ role: "user", content: `Extract the total from:\n${doc}` }],
     temperature: 0,
   });
@@ -367,7 +366,7 @@ async function main(documents: string[]) {
   for (const [doc, err] of failed) {
     let reason: string;
     if (err instanceof EndpointNotReadyError) {
-      reason = "endpoint cold/stopped"; // 503
+      reason = "backend warming"; // 503
     } else if (err instanceof RateLimitError) {
       reason = "rate limited after retries"; // 429
     } else if (err instanceof APITimeoutError) {
@@ -391,9 +390,9 @@ Notes on the error types (all subclass `ParetaError`):
 - **`InsufficientCreditsError` (402)** is fatal for the whole batch, not just one
   task. The balance is shared across the org, so once it hits zero every
   remaining call fails the same way. Stop early and top up.
-- **`EndpointNotReadyError` (503)** means the endpoint is stopped, cold-starting,
-  or its provider is down. Often transient; safe to retry the failed subset after
-  a `start()` or a short wait.
+- **`EndpointNotReadyError` (503)** means a serving backend behind auto is
+  warming up or briefly unavailable. The SDK already retries 503s automatically;
+  anything that still surfaces is safe to retry after a short wait.
 - **`RateLimitError` (429)** surfaces only after the SDK exhausts its own
   retries. If you see these, lower `MAX_IN_FLIGHT`.
 - **`APITimeoutError`** is raised after `max_retries`. Long generations may need a
@@ -417,7 +416,7 @@ from pareta import AsyncPareta
 
 async def stream_into(pa, prompt, sink):
     stream = await pa.chat.completions.create(   # await → returns the async iterator
-        model="ep_invoice_extract",
+        model="auto",
         messages=[{"role": "user", "content": prompt}],
         stream=True,
     )
@@ -447,7 +446,7 @@ import { Pareta } from "pareta";
 
 async function streamInto(pa: Pareta, prompt: string, sink: string[]) {
   const stream = pa.chat.completions.create({   // stream:true → AsyncIterable, no await
-    model: "ep_invoice_extract",
+    model: "auto",
     messages: [{ role: "user", content: prompt }],
     stream: true,
   });
@@ -486,18 +485,12 @@ wait. That makes a fan-out of `wait=True` runs genuinely concurrent.
 import asyncio
 from pareta import AsyncPareta
 
-# Compare candidate aliases on three tasks, each against its frontier baselines.
-JOBS = [
-    ("contract-key-fields",   ["qwen-1", "llama-2"]),
-    ("invoice-extraction",    ["qwen-1", "pixtral-1"]),
-    ("doc-classification",    ["llama-1", "qwen-2"]),
-]
-
-async def eval_task(pa, eval_set_id, models):
+# Benchmark "auto" against frontier baselines on three of your datasets.
+async def eval_one(pa, eval_set_id):
     run = await pa.evals.runs.create(
         eval_set=eval_set_id,
-        models=models,            # per-task open-model aliases
-        frontier="benchmarked",   # frontier models on this task's leaderboard
+        models=["auto"],          # the candidate under test
+        frontier="benchmarked",   # frontier models already benchmarked on this task
         wait=True,                # polls until terminal (completed/failed)
         timeout=1200.0,
     )
@@ -506,8 +499,7 @@ async def eval_task(pa, eval_set_id, models):
 async def main(eval_set_ids):
     async with AsyncPareta.from_env() as pa:
         runs = await asyncio.gather(
-            *(eval_task(pa, sid, models)
-              for sid, (_, models) in zip(eval_set_ids, JOBS)),
+            *(eval_one(pa, sid) for sid in eval_set_ids),
             return_exceptions=True,
         )
 
@@ -538,18 +530,12 @@ billed total is `run.cost` — a fixed-2dp **string** here, not a `Decimal` — 
 ```typescript
 import { Pareta } from "pareta";
 
-// Compare candidate aliases on three tasks, each against its frontier baselines.
-const JOBS: Array<[string, string[]]> = [
-  ["contract-key-fields", ["qwen-1", "llama-2"]],
-  ["invoice-extraction", ["qwen-1", "pixtral-1"]],
-  ["doc-classification", ["llama-1", "qwen-2"]],
-];
-
-async function evalTask(pa: Pareta, evalSetId: string, models: string[]) {
+// Benchmark "auto" against frontier baselines on three of your datasets.
+async function evalOne(pa: Pareta, evalSetId: string) {
   return pa.evals.runs.create({
     evalSet: evalSetId,
-    models,                  // per-task open-model aliases
-    frontier: "benchmarked", // frontier models on this task's leaderboard
+    models: ["auto"],        // the candidate under test
+    frontier: "benchmarked", // frontier models already benchmarked on this task
     wait: true,              // polls until terminal (completed/failed)
     timeout: 1200,
   });
@@ -558,7 +544,7 @@ async function evalTask(pa: Pareta, evalSetId: string, models: string[]) {
 async function main(evalSetIds: string[]) {
   const pa = Pareta.fromEnv();
   const runs = await Promise.allSettled(
-    evalSetIds.map((sid, i) => evalTask(pa, sid, JOBS[i][1])),
+    evalSetIds.map((sid) => evalOne(pa, sid)),
   );
 
   for (const outcome of runs) {
@@ -582,12 +568,11 @@ async function main(evalSetIds: string[]) {
 await main(["es_abc", "es_def", "es_ghi"]);
 ```
 
-Eval runs are metered too: the org balance is debited for the compute (open
-candidates plus any frontier baselines), and an empty balance raises
+Eval runs are metered too: the org balance is debited for the compute (`"auto"`
+plus any frontier baselines), and an empty balance raises
 `InsufficientCreditsError` (402). `run.cost` is the billed total as `Decimal`
 dollars floored to cents; `run.cost_micro_usd` keeps the raw micro-USD integer if
-you need sub-cent precision. Result `model_id`s are per-task public aliases, not
-real model ids.
+you need sub-cent precision.
 
 If you do not want to block on completion, drop `wait=True` and the call returns
 immediately with a queued `EvalRun`; await `pa.evals.runs.wait(run.id)` later, or
@@ -609,6 +594,6 @@ poll `pa.evals.runs.retrieve(run.id)` yourself.
 
 - [The client](../reference/client.md) — constructor, `from_env`, retries, timeouts
 - [Chat completions](../guide/inference.md) — full inference surface and streaming
-- [Endpoints](../guide/deploying-endpoints.md) — deploy, start/stop, and operate endpoints
+- [Core concepts](../guide/core-concepts.md) — the auto surface, metering, and billing
 - [Evals](../guide/evaluation.md) — eval sets, runs, and frontier baselines
 - [Errors](../guide/errors-and-retries.md) — the full `ParetaError` hierarchy

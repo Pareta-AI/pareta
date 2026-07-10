@@ -1,27 +1,28 @@
 # Evaluating on your own data
 
-Benchmarks tell you which model wins on someone else's data. This page is about the only number that matters: how the candidates score on *your* rows.
+Benchmarks tell you which model wins on someone else's data. This page is about the only number that matters: how `model="auto"` scores on *your* rows.
 
-You give Pareta a list of items for a task, point it at a set of open models (and, optionally, frontier baselines to beat), and get back per-model quality with confidence intervals and cost. The platform scores everything with the task's scorer, runs the open candidates and the frontier baselines on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+You give Pareta a list of items for a task, name the frontier baselines you want beaten, and get back per-contender quality with confidence intervals and cost. The platform scores everything with the task's scorer, runs `"auto"` and the frontier baselines on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
 
 The shape is always the same:
 
 1. Turn your rows into an **eval set** (`evals.sets.create`), or pass them inline.
-2. Kick off an **eval run** over a list of models (`evals.runs.create`), optionally waiting for it to finish.
+2. Kick off an **eval run** with `"auto"` as the candidate and frontier baselines to beat (`evals.runs.create`), optionally waiting for it to finish.
 3. Read `run.results` to compare quality and cost; read `run.cost` for the bill.
 
 ## Benchmark Pareta itself: `"auto"` as a contender
 
-Include the literal string `"auto"` among the candidate models and the eval
-runs Pareta's routing brain against every item — same inputs as every other
-contender, scored by the same scorer. The per-contender result rows
-(quality mean + CI, mean cost per item) are the product's core claim,
-measured on your data:
+The candidate is the literal string `"auto"`, and the eval runs Pareta's
+routing brain against every item — the same planning, routing, and
+verification that serves your production traffic, scored by the same scorer
+as the baselines. The per-contender result rows (quality mean + CI, mean cost
+per item) are the product's core claim, measured on your data:
 
 ```python
 run = client.evals.runs.create(
     eval_set=my_set,
-    candidates=["auto", "gpt-5.5"],   # Pareta MoM vs the frontier
+    models=["auto"],          # the contender: Pareta's routing brain
+    frontier=["gpt-5.5"],     # the frontier baseline to beat
 )
 ```
 
@@ -46,8 +47,8 @@ run = pa.evals.runs.create(
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
     ],
-    models=["llama-1", "qwen-2"],   # per-task open aliases
-    frontier="benchmarked",          # baselines already on this task's leaderboard
+    models=["auto"],                 # the contender
+    frontier="benchmarked",          # baselines already benchmarked on this task
     wait=True,                       # block until the run is terminal
 )
 
@@ -55,7 +56,7 @@ print(run.status)          # "completed"
 print(f"billed ${run.cost}")  # Decimal dollars, floored to cents
 
 for r in run.results:
-    print(f"{r.model_id:16} {r.kind:8} q={r.quality_mean:.3f} "
+    print(f"{r.model_id:16} {(r.kind or ''):8} q={r.quality_mean:.3f} "
           f"[{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]  "
           f"~{r.mean_cost_micro_usd} uUSD/item  "
           f"({r.n_succeeded} ok, {r.error_count} err)")
@@ -74,8 +75,8 @@ const run = await pa.evals.runs.create({
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
   ],
-  models: ["llama-1", "qwen-2"], // per-task open aliases
-  frontier: "benchmarked",        // baselines already on this task's leaderboard
+  models: ["auto"],               // the contender
+  frontier: "benchmarked",        // baselines already benchmarked on this task
   wait: true,                     // block until the run is terminal
 });
 
@@ -84,7 +85,7 @@ console.log(`billed $${run.cost}`); // dollar string, floored to cents
 
 for (const r of run.results) {
   console.log(
-    `${r.modelId} ${r.kind} q=${r.qualityMean} ` +
+    `${r.modelId} ${r.kind ?? ""} q=${r.qualityMean} ` +
       `[${r.qualityCiLow}, ${r.qualityCiHigh}]  ` +
       `~${r.meanCostMicroUsd} uUSD/item  ` +
       `(${r.nSucceeded} ok, ${r.errorCount} err)`,
@@ -92,9 +93,9 @@ for (const r of run.results) {
 }
 ```
 
-That single call created the eval set inline, started the run, polled it to completion, and returned aggregates per model. Everything below unpacks the pieces so you can vary them.
+That single call created the eval set inline, started the run, polled it to completion, and returned aggregates per contender. Everything below unpacks the pieces so you can vary them.
 
-The model ids in `models=` are **per-task public aliases** (`{family}-{rank}`), not raw model names. They come from a task's leaderboard. Frontier (vendor) ids are in the clear. See [Models and aliases](inference.md) for why and how to discover them.
+`models=` is always `["auto"]` — individual open-weights models are not part of the eval surface; they stay behind auto's routing. Frontier (vendor) ids are in the clear, and `frontier=` chooses which of them get scored alongside.
 
 ## Step 1: build an eval set
 
@@ -136,7 +137,7 @@ console.log(evalSet.itemCount);       // 2
 console.log(evalSet.scoringStrategy); // e.g. "extraction" — how this task is scored
 ```
 
-`items` is required and must be non-empty (the SDK raises `ValueError` otherwise). Each item is a row in the task's input schema; the rows go up as JSONL on the wire. The exact field names (`input`, `expected`, and any others) follow the task you chose. To inspect a task's schema and pull sample items before you format yours, use `tasks.retrieve(task_id, examples_n=...)` — see [Discovering tasks](discovery.md).
+`items` is required and must be non-empty (the SDK raises `ValueError` otherwise). Each item is a row in the task's input schema; the rows go up as JSONL on the wire. The exact field names (`input`, `expected`, and any others) follow the task you chose. To inspect a task's schema and pull sample items before you format yours, use `tasks.retrieve(task_id, examples_n=...)` — see the [tasks reference](../reference/tasks.md).
 
 Manage sets like any other resource:
 
@@ -234,13 +235,14 @@ Frontier baselines on document tasks are automatically vision-filtered — you n
 
 ```python
 # Against an existing set
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1", "qwen-2"], wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="benchmarked", wait=True)
 
 # Inline: create the set and run it in one shot
 run = pa.evals.runs.create(
     task="contract-key-fields",
     items=[{"input": "...", "expected": {...}}],
-    models=["llama-1", "qwen-2"],
+    models=["auto"],
+    frontier="benchmarked",
     wait=True,
 )
 ```
@@ -249,54 +251,55 @@ run = pa.evals.runs.create(
 
 ```typescript
 // Against an existing set
-let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1", "qwen-2"], wait: true });
+let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: "benchmarked", wait: true });
 
 // Inline: create the set and run it in one shot
 run = await pa.evals.runs.create({
   task: "contract-key-fields",
   items: [{ input: "...", expected: {} }],
-  models: ["llama-1", "qwen-2"],
+  models: ["auto"],
+  frontier: "benchmarked",
   wait: true,
 });
 ```
 
-You must pass **either** `eval_set=<id>` **or** `task=… + items=…`; the SDK raises `ValueError` if you give neither. `models` is required — it's the list of open candidate aliases to evaluate. Each run is **metered**: the org balance is debited for the compute across open and frontier models. If the balance is empty, `create` raises `InsufficientCreditsError` (402). Top-up is browser-only — the SDK never exposes balance or payment methods. See [Errors and metering](errors-and-retries.md).
+You must pass **either** `eval_set=<id>` **or** `task=… + items=…`; the SDK raises `ValueError` if you give neither. `models` is required — pass `["auto"]`; `frontier=` names the baselines it is measured against. Each run is **metered**: the org balance is debited for the compute across auto and the frontier baselines. If the balance is empty, `create` raises `InsufficientCreditsError` (402). Top-up is browser-only — the SDK never exposes balance or payment methods. See [Errors and metering](errors-and-retries.md).
 
 ### Choosing frontier baselines
 
-`frontier=` controls which vendor models get scored alongside your open candidates, so the report shows you exactly how much quality (and cost) you're trading. It accepts a keyword or an explicit list, resolved SDK-side:
+`frontier=` controls which vendor models get scored alongside `"auto"`, so the report shows you exactly how much quality (and cost) you're trading. It accepts a keyword or an explicit list, resolved SDK-side:
 
 | `frontier=` | Baselines scored |
 | --- | --- |
-| `None` or `"none"` (default `None`) | none — open candidates only |
+| `None` or `"none"` (default `None`) | none — `"auto"` alone |
 | `"all"` | every frontier model available for the task |
-| `"benchmarked"` | frontier models already on the task's leaderboard (vision-filtered for document tasks) |
-| `["gpt-4o", "claude-..."]` | exactly these frontier model ids |
+| `"benchmarked"` | frontier models Pareta has already benchmarked on the task (vision-filtered for document tasks) |
+| `["gpt-5.5", "claude-sonnet-4-6"]` | exactly these frontier model ids |
 
 **Python**
 
 ```python
-# Just the open candidates, no baseline
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"], frontier="none", wait=True)
+# Just auto, no baseline
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="none", wait=True)
 
 # Everything in the frontier pool for the task
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"], frontier="all", wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="all", wait=True)
 
 # A hand-picked baseline
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"], frontier=["gpt-4o"], wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier=["gpt-5.5"], wait=True)
 ```
 
 **TypeScript**
 
 ```typescript
-// Just the open candidates, no baseline
-let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"], frontier: "none", wait: true });
+// Just auto, no baseline
+let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: "none", wait: true });
 
 // Everything in the frontier pool for the task
-run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"], frontier: "all", wait: true });
+run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: "all", wait: true });
 
 // A hand-picked baseline
-run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"], frontier: ["gpt-4o"], wait: true });
+run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: ["gpt-5.5"], wait: true });
 ```
 
 The `"all"` and `"benchmarked"` keywords need to know the task. When you create inline (`task=…`) the SDK already has it; when you pass `eval_set=…` it looks the task up from the set. If it still can't resolve a task it raises `ValueError`, and an unrecognized keyword (anything other than `"all"`/`"benchmarked"`/`"none"`) raises `ValueError` too.
@@ -312,7 +315,7 @@ for m in roster:
 
 # Pin two of them explicitly
 ids = [m.id for m in roster if m.benchmarked][:2]
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"], frontier=ids, wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier=ids, wait=True)
 ```
 
 **TypeScript**
@@ -325,7 +328,7 @@ for (const m of roster) {
 
 // Pin two of them explicitly
 const ids = roster.filter((m) => m.benchmarked).map((m) => m.id).slice(0, 2);
-const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"], frontier: ids, wait: true });
+const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: ids, wait: true });
 ```
 
 `frontier_models()` annotates `benchmarked` and applies the capability filter only when you pass `task=`. Without a task it returns the full roster, unannotated.
@@ -337,7 +340,7 @@ By default `create` returns as soon as the run is queued, so you can poll on you
 **Python**
 
 ```python
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"])
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"])
 print(run.status)   # "running" (or queued)
 
 run = pa.evals.runs.retrieve(run.id)   # refetch full state
@@ -348,7 +351,7 @@ while not run.is_terminal:
 **TypeScript**
 
 ```typescript
-let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"] });
+let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"] });
 console.log(run.status); // "running" (or queued)
 
 run = await pa.evals.runs.retrieve(run.id); // refetch full state
@@ -362,14 +365,14 @@ Or let the SDK block for you. `wait=True` polls `runs.retrieve` every `poll_inte
 **Python**
 
 ```python
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["llama-1"])
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"])
 run = pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=1800.0)
 ```
 
 **TypeScript**
 
 ```typescript
-let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["llama-1"] });
+let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"] });
 run = await pa.evals.runs.wait(run.id, { pollInterval: 5.0, timeout: 1800.0 });
 ```
 
@@ -377,7 +380,7 @@ run = await pa.evals.runs.wait(run.id, { pollInterval: 5.0, timeout: 1800.0 });
 
 ## Step 3: read the results
 
-A terminal `EvalRun` carries one `EvalResult` per model in `run.results`, plus the bill.
+A terminal `EvalRun` carries one `EvalResult` per contender in `run.results` — `"auto"` plus each frontier baseline — and the bill.
 
 **Python**
 
@@ -387,10 +390,8 @@ run = pa.evals.runs.retrieve(run_id)
 if run.status == "failed":
     print("run failed:", run.error_detail)
 else:
-    # Best open model by mean quality
-    open_models = [r for r in run.results if r.kind == "open"]
-    best = max(open_models, key=lambda r: r.quality_mean or 0.0)
-    print(f"best open: {best.model_id} @ {best.quality_mean:.3f}")
+    auto = next(r for r in run.results if r.model_id == "auto")
+    print(f"auto: q={auto.quality_mean:.3f} @ ~{auto.mean_cost_micro_usd} uUSD/item")
 
     for r in run.results:
         print(r.model_id, r.kind, r.quality_mean,
@@ -406,10 +407,8 @@ const run = await pa.evals.runs.retrieve(runId);
 if (run.status === "failed") {
   console.log("run failed:", run.errorDetail);
 } else {
-  // Best open model by mean quality
-  const openModels = run.results.filter((r) => r.kind === "open");
-  const best = openModels.reduce((a, b) => ((b.qualityMean ?? 0) > (a.qualityMean ?? 0) ? b : a));
-  console.log(`best open: ${best.modelId} @ ${best.qualityMean}`);
+  const auto = run.results.find((r) => r.modelId === "auto")!;
+  console.log(`auto: q=${auto.qualityMean} @ ~${auto.meanCostMicroUsd} uUSD/item`);
 
   for (const r of run.results) {
     console.log(
@@ -423,12 +422,12 @@ if (run.status === "failed") {
 
 Each `EvalResult` has:
 
-- `model_id` — the per-task public alias (open) or vendor id (frontier).
-- `kind` — `"open"` or `"frontier"`. Filter on this to separate candidates from baselines.
-- `quality_mean`, `quality_ci_low`, `quality_ci_high` — mean score in `[0, 1]` with a 95% confidence interval. Use the interval: two models whose CIs overlap are not meaningfully different on this sample, so add rows before declaring a winner.
-- `mean_cost_micro_usd` — average cost per item in **micro-USD** (1,000,000 = $1.00). This stays in micro-USD on purpose: flooring sub-cent unit rates to whole cents would erase the open-vs-frontier cost gap that the whole exercise is about.
-- `n_succeeded`, `error_count` — how many items scored vs. errored for that model.
-- `per_item` — the per-item rows, each an `EvalItemResult` with `idx`, `score`, `error`, and `prediction` (the model's raw output, truncated). Reach for `prediction` when a `score` is surprisingly low — it's the model's actual answer, so you can see *why* it lost points without re-running the eval.
+- `model_id` — `"auto"` for Pareta's row; the vendor id for each frontier baseline.
+- `kind` — `"frontier"` on the baseline rows. Filter on it to separate the contender from what it is measured against.
+- `quality_mean`, `quality_ci_low`, `quality_ci_high` — mean score in `[0, 1]` with a 95% confidence interval. Use the interval: two contenders whose CIs overlap are not meaningfully different on this sample, so add rows before declaring a winner.
+- `mean_cost_micro_usd` — average cost per item in **micro-USD** (1,000,000 = $1.00). This stays in micro-USD on purpose: flooring sub-cent unit rates to whole cents would erase the auto-vs-frontier cost gap that the whole exercise is about.
+- `n_succeeded`, `error_count` — how many items scored vs. errored for that contender.
+- `per_item` — the per-item rows, each an `EvalItemResult` with `idx`, `score`, `error`, and `prediction` (the model's raw output, truncated). Reach for `prediction` when a `score` is surprisingly low — it's the actual answer, so you can see *why* it lost points without re-running the eval.
 
 ### What the run cost
 
@@ -454,7 +453,7 @@ Every response object also keeps the raw server JSON: `run.to_dict()`, `result.t
 
 ## Async
 
-Every method has an async twin on `AsyncPareta` with the same signatures. Run candidates concurrently and await the results:
+Every method has an async twin on `AsyncPareta` with the same signatures. Run evals concurrently and await the results:
 
 **Python**
 
@@ -467,7 +466,7 @@ async def main():
         run = await pa.evals.runs.create(
             task="contract-key-fields",
             items=[{"input": "...", "expected": {...}}],
-            models=["llama-1", "qwen-2"],
+            models=["auto"],
             frontier="benchmarked",
             wait=True,
         )
@@ -490,7 +489,7 @@ const pa = Pareta.fromEnv();
 const run = await pa.evals.runs.create({
   task: "contract-key-fields",
   items: [{ input: "...", expected: {} }],
-  models: ["llama-1", "qwen-2"],
+  models: ["auto"],
   frontier: "benchmarked",
   wait: true,
 });
@@ -502,8 +501,8 @@ console.log("billed", run.cost);
 
 // Fan several runs out concurrently with Promise.all:
 const [a, b] = await Promise.all([
-  pa.evals.runs.create({ evalSet: setA, models: ["llama-1"], wait: true }),
-  pa.evals.runs.create({ evalSet: setB, models: ["qwen-2"], wait: true }),
+  pa.evals.runs.create({ evalSet: setA, models: ["auto"], frontier: "benchmarked", wait: true }),
+  pa.evals.runs.create({ evalSet: setB, models: ["auto"], frontier: "benchmarked", wait: true }),
 ]);
 ```
 
@@ -511,16 +510,13 @@ const [a, b] = await Promise.all([
 
 ## From eval to production
 
-Once the results pick a winner, deploy it for that task and serve inference against it:
+There is no deploy step. The routing that just won your eval is the same routing that serves `model="auto"` in production — keep sending it your traffic:
 
 **Python**
 
 ```python
-ep = pa.endpoints.deploy(task="contract-key-fields", model=best.model_id, wait=True)
-print(ep.id, ep.is_live)
-
 resp = pa.chat.completions.create(
-    model=ep.id,
+    model="auto",
     messages=[{"role": "user", "content": "Extract the effective date from: ..."}],
 )
 print(resp.choices[0].message.content)
@@ -529,22 +525,18 @@ print(resp.choices[0].message.content)
 **TypeScript**
 
 ```typescript
-const ep = await pa.endpoints.deploy({ task: "contract-key-fields", model: best.modelId, wait: true });
-console.log(ep.id, ep.isLive);
-
 const resp = await pa.chat.completions.create({
-  model: ep.id,
+  model: "auto",
   messages: [{ role: "user", content: "Extract the effective date from: ..." }],
 });
 console.log(resp.choices[0].message.content);
 ```
 
-Deploy takes only a task and a model — Pareta resolves the hardware, so there is no GPU or quantization knob. Inference is OpenAI-compatible and metered the same way evals are. See [Deploying endpoints](deploying-endpoints.md) and [Running inference](./inference.md) to go further.
+Inference is OpenAI-compatible and metered the same way evals are — one debit per request, no matter how many internal model calls auto's plan makes. To watch the production side of the story — requests, success rate, spend, and the projected savings vs frontier — poll `auto.metrics()`. See [Running inference](./inference.md) and [Cost & quality monitoring](../examples/cost-and-metrics.md).
 
 ## See also
 
-- [Discovering tasks](discovery.md) — find the right task id, inspect its schema, pull example rows.
-- [Models and aliases](inference.md) — where the per-task open aliases come from and why real ids are hidden.
-- [Deploying endpoints](deploying-endpoints.md) — turn a winning model into a live endpoint.
-- [Running inference](./inference.md) — the OpenAI-compatible chat surface.
+- [The tasks reference](../reference/tasks.md) — find the right task id, inspect its schema, pull example rows.
+- [Running inference](./inference.md) — the OpenAI-compatible `model="auto"` chat surface.
+- [Cost & quality monitoring](../examples/cost-and-metrics.md) — read run costs and watch live auto traffic with `auto.metrics()`.
 - [Errors and metering](errors-and-retries.md) — `InsufficientCreditsError`, the money convention, and the exception hierarchy.

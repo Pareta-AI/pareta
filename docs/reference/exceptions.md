@@ -29,7 +29,7 @@ from pareta import (
     NotFoundError,              # 404
     ConflictError,              # 409
     RateLimitError,             # 429
-    EndpointNotReadyError,      # 503 — endpoint stopped/cold/provider down
+    EndpointNotReadyError,      # 503 — a backend behind auto warming/briefly down
 )
 ```
 
@@ -72,11 +72,11 @@ raw `status_code`.
 | 401 | `AuthenticationError` | Missing or invalid `pareta_sk_` API key |
 | 402 | `InsufficientCreditsError` | Org balance is empty — top up in the dashboard |
 | 403 | `PermissionDeniedError` | Authenticated, but not allowed |
-| 404 | `NotFoundError` | Endpoint, task, eval set, or run id does not exist |
-| 409 | `ConflictError` | Conflict (e.g. seed endpoint, transient lock/contention) |
+| 404 | `NotFoundError` | Task, eval set, or run id does not exist |
+| 409 | `ConflictError` | Conflict (transient lock/contention) |
 | 422 | `BadRequestError` | FastAPI request validation failed |
 | 429 | `RateLimitError` | Rate limited; honors `Retry-After` |
-| 503 | `EndpointNotReadyError` | Endpoint stopped, cold-starting, or provider down |
+| 503 | `EndpointNotReadyError` | A serving backend behind `auto` is warming or briefly unavailable |
 | other 5xx | `APIStatusError` | Generic server error |
 
 Note that `400` and `422` both map to `BadRequestError`, so a single clause
@@ -146,7 +146,7 @@ from pareta import Pareta, APIStatusError
 
 pa = Pareta.from_env()
 try:
-    pa.endpoints.retrieve("ep_does_not_exist")
+    pa.tasks.retrieve("nonexistent-task")
 except APIStatusError as e:
     print(e.status_code)     # 404
     print(e.detail)          # server's explanation
@@ -169,7 +169,7 @@ dashboard and pass it via `Pareta.from_env()` (reads `PARETA_API_KEY`) or
 
 The org balance is empty. Both metered paths raise this: inference
 (`chat.completions.create()`) and eval runs (`evals.runs.create()`, billed for
-open and frontier compute combined). Top-up is browser-only — the SDK never
+auto and frontier compute combined). Top-up is browser-only — the SDK never
 exposes balance or payment methods, so the fix is to add credit in the
 dashboard and retry.
 
@@ -179,7 +179,7 @@ from pareta import Pareta, InsufficientCreditsError
 pa = Pareta.from_env()
 try:
     pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Extract the parties."}],
     )
 except InsufficientCreditsError:
@@ -193,15 +193,14 @@ resource or action.
 
 ### `NotFoundError(APIStatusError)` — 404
 
-The referenced resource does not exist: an unknown endpoint id, task id, eval
-set id, or run id.
+The referenced resource does not exist: an unknown task id, eval set id, or
+run id.
 
 ### `ConflictError(APIStatusError)` — 409
 
-A conflict on the server — for example a seed/legacy endpoint that is not
-deployable, or a transient lock or contention. A 409 is retried automatically
-(see [the retry list below](#what-gets-retried)); a stable 409 surfaces here
-after the retry budget is spent.
+A conflict on the server — a transient lock or contention on the resource. A
+409 is retried automatically (see [the retry list below](#what-gets-retried));
+a stable 409 surfaces here after the retry budget is spent.
 
 ### `RateLimitError(APIStatusError)` — 429
 
@@ -211,22 +210,24 @@ exhausted.
 
 ### `EndpointNotReadyError(APIStatusError)` — 503
 
-The target endpoint is not serving yet: stopped, cold-starting, or its provider
-is temporarily unavailable. Start it with `endpoints.start(endpoint_id)`, wait
-for `endpoint.is_live`, then retry. 503 is in the automatic retry set, so a
-brief cold start often resolves before this is raised.
+A serving backend behind `auto` is warming up (a cold start) or briefly
+unavailable. 503 is in the automatic retry set, so a brief warm-up often
+resolves before this is raised. If it still surfaces, there is nothing to fix
+on your side — wait briefly and re-issue the request.
 
 ```python
+import time
+
 from pareta import Pareta, EndpointNotReadyError
 
 pa = Pareta.from_env()
 try:
     pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "ping"}],
     )
 except EndpointNotReadyError:
-    pa.endpoints.start("ep_contract_kie")   # wake it, then retry
+    time.sleep(10)   # still warming after the SDK's own retries — pause, then re-issue
 ```
 
 ## What gets retried
@@ -242,9 +243,8 @@ above only surface after the retry budget (`max_retries`, default `2`) is spent.
   status not in the list. These are deterministic — retrying would not change the
   outcome — so they raise immediately.
 - **Mid-stream drops are not retried.** Retries apply only to the initial
-  handshake; once SSE bytes are flowing (a streaming chat completion or a deploy
-  progress stream) a dropped connection raises immediately, since the stream
-  cannot be safely resumed.
+  handshake; once SSE bytes are flowing (a streaming chat completion) a dropped
+  connection raises immediately, since the stream cannot be safely resumed.
 
 Tune the budget per client:
 
@@ -274,14 +274,14 @@ pa = Pareta.from_env()
 
 try:
     completion = pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Summarize this contract."}],
     )
     print(completion.choices[0].message.content)
 except InsufficientCreditsError:
     print("Out of credit — top up in the dashboard, then retry.")
 except EndpointNotReadyError:
-    pa.endpoints.start("ep_contract_kie")          # wake a cold/stopped endpoint
+    print("A backend is still warming — wait briefly, then retry.")
 except RateLimitError as e:
     print(f"Rate limited; the client already retried. request_id={e.request_id}")
 except APIStatusError as e:
@@ -303,7 +303,7 @@ from pareta import AsyncPareta, APIStatusError
 async def main():
     async with AsyncPareta.from_env() as pa:
         try:
-            await pa.endpoints.retrieve("ep_does_not_exist")
+            await pa.tasks.retrieve("nonexistent-task")
         except APIStatusError as e:
             print(e.status_code, e.detail)
 
@@ -329,7 +329,5 @@ unusable. These are programming errors caught early, not server responses:
   `timeout`, and `max_retries`.
 - [Inference](../guide/inference.md) — the metered chat path that raises
   `InsufficientCreditsError`.
-- [Deploying endpoints](../guide/deploying-endpoints.md) — starting and stopping
-  endpoints behind `EndpointNotReadyError`.
 - [Evaluation](../guide/evaluation.md) — eval runs, also metered against the org
   balance.

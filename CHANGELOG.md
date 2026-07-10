@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.0.0 — 2026-07-08
+
+- Every POST now carries an `Idempotency-Key` header, generated once per
+  logical call and re-sent verbatim on automatic retries — the server
+  collapses all attempts of one request onto a single billed debit
+  (fixes double-billing when a long-running request outlived a client
+  timeout and the SDK retried it).
+- Default request timeout raised 60s → 600s (long-document `model:"auto"`
+  requests legitimately run 60–180s server-side; matches the OpenAI SDK
+  default).
+
+Auto-only major. `model:"auto"` is the product; the SDK, CLI, MCP server, and
+agent skill now expose only the auto-first surface.
+
+### BREAKING
+
+- **`endpoints.*` removed** everywhere: the `client.endpoints` namespace
+  (deploy / list / retrieve / start / stop / delete / metrics) is gone from
+  the Python client (sync + async), the `pareta endpoints …` CLI group is
+  gone, and the MCP server no longer registers `deploy_endpoint`,
+  `list_endpoints`, `get_endpoint`, `start_endpoint`, `stop_endpoint`,
+  `delete_endpoint`, `endpoint_metrics`, or `endpoint_cost`.
+- **`tasks.leaderboard()` / `tasks.recommended()` removed** from the client,
+  the CLI (`pareta tasks leaderboard|recommended`), and the MCP server
+  (`get_leaderboard`, `recommended_model` tools). `tasks.match` stays as the
+  discovery surface — and `evals` proves `"auto"` on your own data, which is
+  the measurement that matters.
+- **Public types removed**: `Endpoint`, `Leaderboard`, `LeaderboardEntry` are
+  no longer exported (or defined). `FrontierModel` stays (returned by
+  `evals.frontier_models()`).
+- The `/pareta` agent skill and MCP toolset are now auto-only: call
+  `model:"auto"`, prove it with evals, watch it with `auto metrics` — no
+  deploy/operate path.
+
+### Kept (unchanged)
+
+- `chat.*` (defaults to `model="auto"`), `models.*`,
+  `tasks.list/retrieve/match`, `evals.*` (sets, runs, frontier_models),
+  `audio.*`, `auto.*` (metrics + compare_frontier), sync + async clients.
+
+### Fixed
+
+- CLI: `pareta auto metrics` / `pareta auto compare` crashed in `--json`
+  handling (referenced a nonexistent `state.json_output` / `_print_json`);
+  now use the real `--json` plumbing.
+
 ## 0.3.1 — 2026-07-05
 
 - **Auto-first docs everywhere**: the README (PyPI/GitHub landing) now leads

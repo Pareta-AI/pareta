@@ -1,8 +1,8 @@
 # Async usage
 
-`AsyncPareta` is the asyncio-native client. It mirrors the synchronous [`Pareta`](./quickstart.md) client method-for-method: same constructor, same resource namespaces (`chat`, `models`, `endpoints`, `tasks`, `evals`), same return types. The difference is that request methods are coroutines you `await`, streams are async iterators you drive with `async for`, and many independent calls can run concurrently under one event loop instead of blocking one after another.
+`AsyncPareta` is the asyncio-native client. It mirrors the synchronous [`Pareta`](./quickstart.md) client method-for-method: same constructor, same resource namespaces (`chat`, `models`, `tasks`, `evals`, `auto`, `audio`), same return types. The difference is that request methods are coroutines you `await`, streams are async iterators you drive with `async for`, and many independent calls can run concurrently under one event loop instead of blocking one after another.
 
-Reach for it when you are inside an async app (FastAPI, an aiohttp worker, a Discord bot) or when you want to fan out work: score ten models in parallel, deploy several endpoints at once, or run inference against a batch of inputs without waiting on each round trip.
+Reach for it when you are inside an async app (FastAPI, an aiohttp worker, a Discord bot) or when you want to fan out work: run a batch of prompts against `model="auto"` without waiting on each round trip, or kick off several eval runs at once.
 
 ## The client
 
@@ -43,7 +43,7 @@ for (const m of models) {
 }
 ```
 
-`models.list()` returns the same `ModelList` as the sync path: only deployed, url-bearing endpoints, OpenAI-compatible. The `id` of each is what you pass to `chat.completions.create(model=...)`.
+`models.list()` returns the same `ModelList` as the sync path: exactly one entry, `"auto"` — the only model id you pass to `chat.completions.create(model=...)`.
 
 ### Lifecycle: prefer `async with`
 
@@ -59,7 +59,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         models = await pa.models.list()
-        print(len(models), "endpoints")
+        print([m.id for m in models])  # ['auto']
     # the underlying HTTP client is closed here
 
 
@@ -75,7 +75,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 const models = await pa.models.list();
-console.log(models.length, "endpoints");
+console.log([...models].map((m) => m.id)); // ["auto"]
 // nothing to close
 ```
 
@@ -116,7 +116,7 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         # inference (OpenAI-compatible)
         completion = await pa.chat.completions.create(
-            model="ep_contract_kie_01",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the total due."}],
             temperature=0,
         )
@@ -127,6 +127,10 @@ async def main():
         match = await pa.tasks.match("pull key fields out of contracts")
         if match.matched:
             print("task:", match.chosen.task_id, match.chosen.confidence)
+
+        # auto rollup (requests, success, spend, projected savings)
+        metrics = await pa.auto.metrics()
+        print(metrics["requests_30d"], "requests in 30d")
 
         # eval roster
         frontier = await pa.evals.frontier_models(task="contract-key-fields")
@@ -147,7 +151,7 @@ const pa = Pareta.fromEnv();
 
 // inference (OpenAI-compatible)
 const completion = await pa.chat.completions.create({
-  model: "ep_contract_kie_01",
+  model: "auto",
   messages: [{ role: "user", content: "Extract the total due." }],
   temperature: 0,
 });
@@ -160,32 +164,16 @@ if (match.matched) {
   console.log("task:", match.chosen.taskId, match.chosen.confidence);
 }
 
+// auto rollup (requests, success, spend, projected savings)
+const metrics = await pa.auto.metrics();
+console.log(metrics.requests_30d, "requests in 30d");
+
 // eval roster
 const frontier = await pa.evals.frontierModels("contract-key-fields");
 console.log(frontier.map((f) => f.id));
 ```
 
-`chat.completions.create()` is metered: a successful completion debits your org balance. If the balance is empty it raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK does not expose balance or payment. See [Errors](errors-and-retries.md) and [Billing](core-concepts.md).
-
-Note one shape difference inside `evals`: `pa.endpoints.metrics(endpoint_id)` is **not** a coroutine. It returns an `AsyncMetrics` object synchronously; the dimension methods on it are what you await.
-
-**Python**
-
-```python
-m = pa.endpoints.metrics("ep_contract_kie_01")   # no await here
-cost = await m.cost()                              # await the dimension call
-print(cost)
-```
-
-**TypeScript**
-
-Same shape: `metrics(id)` returns an `EndpointMetrics` handle synchronously; you await each dimension call.
-
-```typescript
-const m = pa.endpoints.metrics("ep_contract_kie_01"); // no await here
-const cost = await m.cost(); // await the dimension call
-console.log(cost);
-```
+`chat.completions.create()` is metered: a successful completion debits your org balance — one debit per request, no matter how many internal model calls auto's plan makes. If the balance is empty it raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK does not expose balance or payment. See [Errors](errors-and-retries.md) and [Billing](core-concepts.md).
 
 ## Streaming with `async for`
 
@@ -201,7 +189,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         stream = await pa.chat.completions.create(
-            model="ep_contract_kie_01",
+            model="auto",
             messages=[{"role": "user", "content": "Summarize this clause."}],
             stream=True,
         )
@@ -225,7 +213,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();
 
 const stream = pa.chat.completions.create({
-  model: "ep_contract_kie_01",
+  model: "auto",
   messages: [{ role: "user", content: "Summarize this clause." }],
   stream: true,
 });
@@ -237,87 +225,6 @@ console.log();
 ```
 
 The stream ends on the wire's `[DONE]` sentinel; the async iterator simply stops. Retries apply only to the initial handshake. Once bytes are flowing, a mid-stream drop raises immediately rather than silently resuming.
-
-### Deploying with progress events
-
-`endpoints.deploy()` takes a task and a model alias and nothing about hardware. Pareta hides GPUs entirely: there is no GPU, tensor-parallel, or quantization knob. `model` defaults to `"recommended"`, the task's curated or top-open pick. Models are addressed by per-task public aliases, never raw weights ids.
-
-With `wait=False` (the default), `await` the call to get an async iterator of `{"event": str, "data": dict}` progress events; the terminal event is `"complete"` (with `data["endpoint"]`) or `"error"`.
-
-**Python**
-
-```python
-import asyncio
-from pareta import AsyncPareta
-
-
-async def main():
-    async with AsyncPareta.from_env() as pa:
-        stream = await pa.endpoints.deploy(task="contract-key-fields", model="recommended")
-        async for event in stream:
-            if event["event"] == "progress":
-                print("stage:", event["data"])
-            elif event["event"] == "complete":
-                ep = event["data"]["endpoint"]
-                print("live:", ep["id"], ep["url"])
-            elif event["event"] == "error":
-                print("failed:", event["data"])
-
-
-asyncio.run(main())
-```
-
-**TypeScript**
-
-`deploy` takes an options object. With `wait` omitted (the default) it returns an `AsyncIterable<{ event, data }>` of progress events; the terminal event is `"complete"` (with `data.endpoint`) or `"error"`. Drive it with `for await`.
-
-```typescript
-import { Pareta } from "pareta";
-
-const pa = Pareta.fromEnv();
-
-const stream = pa.endpoints.deploy({ task: "contract-key-fields", model: "recommended" });
-for await (const event of stream) {
-  if (event.event === "progress") {
-    console.log("stage:", event.data);
-  } else if (event.event === "complete") {
-    const ep = event.data.endpoint;
-    console.log("live:", ep.id, ep.url);
-  } else if (event.event === "error") {
-    console.log("failed:", event.data);
-  }
-}
-```
-
-If you do not want to watch progress, pass `wait=True`. The SDK consumes the stream internally and returns the live `Endpoint` once it is up, raising `ParetaError` on a deploy `"error"` event.
-
-**Python**
-
-```python
-ep = await pa.endpoints.deploy(task="contract-key-fields", model="recommended", wait=True)
-print(ep.id, ep.is_live, ep.url)
-
-# then call it
-completion = await pa.chat.completions.create(
-    model=ep.id,
-    messages=[{"role": "user", "content": "Extract the parties."}],
-)
-```
-
-**TypeScript**
-
-With `wait: true`, `deploy` resolves the live `Endpoint` once it is up (throwing `ParetaError` on a deploy `error` event).
-
-```typescript
-const ep = await pa.endpoints.deploy({ task: "contract-key-fields", model: "recommended", wait: true });
-console.log(ep.id, ep.isLive, ep.url);
-
-// then call it
-const completion = await pa.chat.completions.create({
-  model: ep.id,
-  messages: [{ role: "user", content: "Extract the parties." }],
-});
-```
 
 ## Running many calls concurrently
 
@@ -339,9 +246,9 @@ PROMPTS = [
 ]
 
 
-async def classify(pa: AsyncPareta, model: str, prompt: str) -> str:
+async def classify(pa: AsyncPareta, prompt: str) -> str:
     completion = await pa.chat.completions.create(
-        model=model,
+        model="auto",
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
@@ -351,7 +258,7 @@ async def classify(pa: AsyncPareta, model: str, prompt: str) -> str:
 async def main():
     async with AsyncPareta.from_env() as pa:
         results = await asyncio.gather(
-            *(classify(pa, "ep_contract_kie_01", p) for p in PROMPTS)
+            *(classify(pa, p) for p in PROMPTS)
         )
         for prompt, answer in zip(PROMPTS, results):
             print(prompt, "->", answer)
@@ -376,16 +283,16 @@ const PROMPTS = [
 
 const pa = Pareta.fromEnv();
 
-async function classify(model: string, prompt: string): Promise<string | null> {
+async function classify(prompt: string): Promise<string | null> {
   const completion = await pa.chat.completions.create({
-    model,
+    model: "auto",
     messages: [{ role: "user", content: prompt }],
     temperature: 0,
   });
   return completion.choices[0].message.content;
 }
 
-const results = await Promise.all(PROMPTS.map((p) => classify("ep_contract_kie_01", p)));
+const results = await Promise.all(PROMPTS.map((p) => classify(p)));
 PROMPTS.forEach((prompt, i) => console.log(prompt, "->", results[i]));
 ```
 
@@ -395,7 +302,7 @@ Each of those `create()` calls is metered independently and debits the org balan
 
 ```python
 results = await asyncio.gather(
-    *(classify(pa, "ep_contract_kie_01", p) for p in PROMPTS),
+    *(classify(pa, p) for p in PROMPTS),
     return_exceptions=True,
 )
 for prompt, result in zip(PROMPTS, results):
@@ -410,7 +317,7 @@ for prompt, result in zip(PROMPTS, results):
 `Promise.all` rejects on the first failure, just like `gather`. The equivalent of `return_exceptions=True` is `Promise.allSettled`, which collects a `{ status, value | reason }` per item.
 
 ```typescript
-const settled = await Promise.allSettled(PROMPTS.map((p) => classify("ep_contract_kie_01", p)));
+const settled = await Promise.allSettled(PROMPTS.map((p) => classify(p)));
 PROMPTS.forEach((prompt, i) => {
   const result = settled[i];
   if (result.status === "rejected") {
@@ -421,9 +328,9 @@ PROMPTS.forEach((prompt, i) => {
 });
 ```
 
-### Deploy several endpoints at once
+### Mix resources in one gather
 
-`deploy(..., wait=True)` is a coroutine, so a list of deploys parallelizes cleanly.
+`gather` does not care that the coroutines hit different routes. Kick off an inference call, a catalog match, and your org's auto rollup in one shot:
 
 **Python**
 
@@ -431,16 +338,21 @@ PROMPTS.forEach((prompt, i) => {
 import asyncio
 from pareta import AsyncPareta
 
-TASKS = ["contract-key-fields", "invoice-extraction", "doc-classification"]
-
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        endpoints = await asyncio.gather(
-            *(pa.endpoints.deploy(task=t, model="recommended", wait=True) for t in TASKS)
+        completion, match, metrics = await asyncio.gather(
+            pa.chat.completions.create(
+                model="auto",
+                messages=[{"role": "user", "content": "Extract the parties."}],
+            ),
+            pa.tasks.match("pull key fields out of contracts"),
+            pa.auto.metrics(),
         )
-        for ep in endpoints:
-            print(ep.task, ep.id, ep.is_live)
+        print(completion.choices[0].message.content)
+        if match.matched:
+            print("task:", match.chosen.task_id)
+        print("requests (30d):", metrics["requests_30d"])
 
 
 asyncio.run(main())
@@ -448,26 +360,31 @@ asyncio.run(main())
 
 **TypeScript**
 
-`deploy({ ..., wait: true })` returns a Promise, so a list of deploys parallelizes with `Promise.all`.
+`Promise.all` is heterogeneous too — the tuple keeps each result's type.
 
 ```typescript
 import { Pareta } from "pareta";
 
-const TASKS = ["contract-key-fields", "invoice-extraction", "doc-classification"];
-
 const pa = Pareta.fromEnv();
 
-const endpoints = await Promise.all(
-  TASKS.map((task) => pa.endpoints.deploy({ task, model: "recommended", wait: true })),
-);
-for (const ep of endpoints) {
-  console.log(ep.task, ep.id, ep.isLive);
+const [completion, match, metrics] = await Promise.all([
+  pa.chat.completions.create({
+    model: "auto",
+    messages: [{ role: "user", content: "Extract the parties." }],
+  }),
+  pa.tasks.match("pull key fields out of contracts"),
+  pa.auto.metrics(),
+]);
+console.log(completion.choices[0].message.content);
+if (match.matched) {
+  console.log("task:", match.chosen?.taskId);
 }
+console.log("requests (30d):", metrics.requests_30d);
 ```
 
 ### Run several eval runs in parallel
 
-`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes a leaderboard sweep, one run per candidate set, a natural `gather`.
+`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `task=` + `items=` creates the eval set and the run in one call.
 
 **Python**
 
@@ -475,26 +392,27 @@ for (const ep of endpoints) {
 import asyncio
 from pareta import AsyncPareta
 
-ITEMS = [
-    {"input": "Acme Corp agrees to pay $5,000 net 30.", "expected": {"amount": "5000"}},
-    {"input": "Total due: $1,200 by 2026-07-01.", "expected": {"amount": "1200"}},
-]
+JOBS = {
+    "contract-key-fields": [
+        {"input": "Acme Corp agrees to pay $5,000 net 30.", "expected": {"amount": "5000"}},
+        {"input": "Total due: $1,200 by 2026-07-01.", "expected": {"amount": "1200"}},
+    ],
+    "invoice-extraction": [
+        {"input": "INVOICE #4471 ... TOTAL $1,240.00 ...", "expected": {"total": "1240.00"}},
+    ],
+}
 
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        # create one shared eval set, then sweep candidate model lists against it
-        eval_set = await pa.evals.sets.create(task="contract-key-fields", items=ITEMS)
-        print("eval set:", eval_set.id, eval_set.item_count, "items")
-
-        candidate_lists = [
-            ["contract-key-fields-open-1"],
-            ["contract-key-fields-open-2"],
-        ]
+        # one run per dataset: "auto" against that task's frontier baselines
         runs = await asyncio.gather(
             *(
-                pa.evals.runs.create(eval_set=eval_set.id, models=models, wait=True)
-                for models in candidate_lists
+                pa.evals.runs.create(
+                    task=task, items=items,
+                    models=["auto"], frontier="benchmarked", wait=True,
+                )
+                for task, items in JOBS.items()
             )
         )
         for run in runs:
@@ -508,25 +426,28 @@ asyncio.run(main())
 
 **TypeScript**
 
-`runs.create({ ..., wait: true })` polls `runs.retrieve()` until terminal, so a sweep is a natural `Promise.all`. Note `run.cost` is a fixed-2dp dollar **string** here (`run.costMicroUsd` is the raw integer).
+`runs.create({ ..., wait: true })` polls `runs.retrieve()` until terminal, so the fan-out is a natural `Promise.all`. Note `run.cost` is a fixed-2dp dollar **string** here (`run.costMicroUsd` is the raw integer).
 
 ```typescript
 import { Pareta } from "pareta";
 
-const ITEMS = [
-  { input: "Acme Corp agrees to pay $5,000 net 30.", expected: { amount: "5000" } },
-  { input: "Total due: $1,200 by 2026-07-01.", expected: { amount: "1200" } },
-];
+const JOBS: Record<string, Array<Record<string, unknown>>> = {
+  "contract-key-fields": [
+    { input: "Acme Corp agrees to pay $5,000 net 30.", expected: { amount: "5000" } },
+    { input: "Total due: $1,200 by 2026-07-01.", expected: { amount: "1200" } },
+  ],
+  "invoice-extraction": [
+    { input: "INVOICE #4471 ... TOTAL $1,240.00 ...", expected: { total: "1240.00" } },
+  ],
+};
 
 const pa = Pareta.fromEnv();
 
-// create one shared eval set, then sweep candidate model lists against it
-const evalSet = await pa.evals.sets.create({ task: "contract-key-fields", items: ITEMS });
-console.log("eval set:", evalSet.id, evalSet.itemCount, "items");
-
-const candidateLists = [["contract-key-fields-open-1"], ["contract-key-fields-open-2"]];
+// one run per dataset: "auto" against that task's frontier baselines
 const runs = await Promise.all(
-  candidateLists.map((models) => pa.evals.runs.create({ evalSet: evalSet.id, models, wait: true })),
+  Object.entries(JOBS).map(([task, items]) =>
+    pa.evals.runs.create({ task, items, models: ["auto"], frontier: "benchmarked", wait: true }),
+  ),
 );
 for (const run of runs) {
   console.log(run.id, run.status, "cost", run.cost); // run.cost is a dollar string
@@ -536,16 +457,16 @@ for (const run of runs) {
 }
 ```
 
-Eval runs are metered against the org balance for the compute used (open candidates plus any frontier baselines), and raise `InsufficientCreditsError` on an empty balance. `run.cost` is a `Decimal` in dollars, floored to whole cents (so a sub-cent run reads `Decimal("0.00")`); `run.cost_micro_usd` is the raw integer micro-USD if you need the exact figure. See [Evals](evaluation.md) and [Billing](core-concepts.md).
+Eval runs are metered against the org balance for the compute used (`"auto"` plus any frontier baselines), and raise `InsufficientCreditsError` on an empty balance. `run.cost` is a `Decimal` in dollars, floored to whole cents (so a sub-cent run reads `Decimal("0.00")`); `run.cost_micro_usd` is the raw integer micro-USD if you need the exact figure. See [Evals](evaluation.md) and [Billing](core-concepts.md).
 
-To add vendor baselines, pass `frontier=`. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a task to resolve against (taken from `task=` or looked up from the eval set):
+The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a task to resolve against (taken from `task=` or looked up from the eval set):
 
 **Python**
 
 ```python
 run = await pa.evals.runs.create(
-    eval_set=eval_set.id,
-    models=["contract-key-fields-open-1"],
+    eval_set=eval_set.id,     # an existing set from evals.sets.create(...)
+    models=["auto"],
     frontier="benchmarked",   # or "all", or an explicit list of frontier ids, or None
     wait=True,
 )
@@ -557,8 +478,8 @@ run = await pa.evals.runs.create(
 
 ```typescript
 const run = await pa.evals.runs.create({
-  evalSet: evalSet.id,
-  models: ["contract-key-fields-open-1"],
+  evalSet: evalSet.id, // an existing set from evals.sets.create(...)
+  models: ["auto"],
   frontier: "benchmarked", // or "all", an explicit list of frontier ids, or null
   wait: true,
 });
@@ -571,7 +492,7 @@ If you started a run with `wait=False`, await `runs.wait()` later, or poll `runs
 **Python**
 
 ```python
-run = await pa.evals.runs.create(eval_set=eval_set.id, models=["contract-key-fields-open-1"])
+run = await pa.evals.runs.create(eval_set=eval_set.id, models=["auto"])
 print("queued:", run.id, run.status)
 # ... do other work ...
 final = await pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=600.0)
@@ -583,7 +504,7 @@ print(final.status, final.is_terminal, final.cost)
 `runs.wait(id, { pollInterval, timeout })` takes seconds (defaults 3 / 900) and throws `ParetaError` if the run does not finish in time. The run id is positional; the schedule is an options object.
 
 ```typescript
-const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["contract-key-fields-open-1"] });
+const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"] });
 console.log("queued:", run.id, run.status);
 // ... do other work ...
 const final = await pa.evals.runs.wait(run.id, { pollInterval: 5, timeout: 600 });
@@ -592,7 +513,7 @@ console.log(final.status, final.isTerminal, final.cost);
 
 ## Bounding concurrency
 
-`gather` launches everything at once. For large batches, cap the in-flight count with an `asyncio.Semaphore` so you do not overwhelm a single endpoint or trip rate limits (which surface as `RateLimitError`, 429; the client already retries those with backoff up to `max_retries`).
+`gather` launches everything at once. For large batches, cap the in-flight count with an `asyncio.Semaphore` so you do not trip rate limits (which surface as `RateLimitError`, 429; the client already retries those with backoff up to `max_retries`).
 
 **Python**
 
@@ -608,7 +529,7 @@ async def main():
         async def one(prompt: str) -> str:
             async with sem:
                 completion = await pa.chat.completions.create(
-                    model="ep_contract_kie_01",
+                    model="auto",
                     messages=[{"role": "user", "content": prompt}],
                 )
                 return completion.choices[0].message.content
@@ -635,7 +556,7 @@ const prompts = Array.from({ length: 100 }, (_, i) => `Extract field ${i}.`);
 
 async function one(prompt: string): Promise<string | null> {
   const completion = await pa.chat.completions.create({
-    model: "ep_contract_kie_01",
+    model: "auto",
     messages: [{ role: "user", content: prompt }],
   });
   return completion.choices[0].message.content;
@@ -672,13 +593,13 @@ from pareta import (
 async def safe_call(pa: AsyncPareta):
     try:
         return await pa.chat.completions.create(
-            model="ep_contract_kie_01",
+            model="auto",
             messages=[{"role": "user", "content": "hi"}],
         )
     except InsufficientCreditsError:
         print("org balance is empty; top up in the dashboard")
     except EndpointNotReadyError:
-        print("endpoint is cold or stopped; start it and retry")
+        print("a backend behind auto is briefly unavailable; retry in a moment")
     except RateLimitError:
         print("rate limited even after retries")
     except ParetaError as e:
@@ -701,14 +622,14 @@ import {
 async function safeCall(pa: Pareta) {
   try {
     return await pa.chat.completions.create({
-      model: "ep_contract_kie_01",
+      model: "auto",
       messages: [{ role: "user", content: "hi" }],
     });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       console.log("org balance is empty; top up in the dashboard");
     } else if (e instanceof EndpointNotReadyError) {
-      console.log("endpoint is cold or stopped; start it and retry");
+      console.log("a backend behind auto is briefly unavailable; retry in a moment");
     } else if (e instanceof RateLimitError) {
       console.log("rate limited even after retries");
     } else if (e instanceof ParetaError) {
@@ -730,11 +651,8 @@ Pre-flight validation (empty `model`/`messages`, empty `items`, an unparseable `
 | Cleanup | `pa.close()` / `with pa:` | `await pa.aclose()` / `async with pa:` |
 | Request method | `pa.models.list()` | `await pa.models.list()` |
 | Streaming chat | `for chunk in pa.chat.completions.create(stream=True)` | `stream = await pa...create(stream=True)` then `async for chunk in stream` |
-| Deploy events | `for ev in pa.endpoints.deploy(...)` | `stream = await pa.endpoints.deploy(...)` then `async for ev in stream` |
-| Deploy and block | `pa.endpoints.deploy(..., wait=True)` | `await pa.endpoints.deploy(..., wait=True)` |
 | Wait on a run | `pa.evals.runs.wait(run_id)` | `await pa.evals.runs.wait(run_id)` |
-| Metrics handle | `pa.endpoints.metrics(id)` (sync) | `pa.endpoints.metrics(id)` (sync, returns `AsyncMetrics`) |
-| Metrics dimension | `m.cost()` | `await m.cost()` |
+| Auto metrics | `pa.auto.metrics()` | `await pa.auto.metrics()` |
 | Concurrency | thread pool / one at a time | `asyncio.gather`, one event loop |
 
-Same metering, same aliases, same OpenAI-compatible inference, same hidden GPUs. Once you have the sync flow in [Quickstart](./quickstart.md), the async version is the same calls with `await` in front and `async for` over the streams.
+Same metering, same OpenAI-compatible inference, same hidden models and GPUs. Once you have the sync flow in [Quickstart](./quickstart.md), the async version is the same calls with `await` in front and `async for` over the streams.

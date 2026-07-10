@@ -1,13 +1,11 @@
 # models
 
-`client.models` lists the models you can call right now. It is the OpenAI-compatible model index: `GET /v1/models` returning only your deployed, url-bearing endpoints. Use it to discover the ids you pass to [`chat.completions.create(model=...)`](../guide/inference.md).
-
-This is the inference-time view of your fleet. It deliberately shows less than [`endpoints.list()`](../guide/deploying-endpoints.md): only live, callable endpoints, and only the three fields the OpenAI `/v1/models` contract defines. When you want lifecycle and operations (deploy, start, stop, metrics), use the [endpoints](../guide/deploying-endpoints.md) namespace instead.
+`client.models` is the OpenAI-compatible model index: `GET /v1/models`. On Pareta it returns exactly one entry — **`"auto"`** — because there is only one model id to call. The resource exists so OpenAI-style tooling that discovers ids by listing keeps working unchanged; the id it discovers is the one you pass to [`chat.completions.create(model=...)`](../guide/inference.md).
 
 Two platform truths show up here:
 
-- **Models are per-task aliases.** A `Model.id` is a callable endpoint id; the underlying open-weights model id never reaches you. The backend resolves it. You never see or pick a GPU.
-- **Calling a model is metered.** Listing is free, but each completion against an id from this list debits your org balance. An empty balance raises `InsufficientCreditsError` (402) at call time. Top-up is browser-only.
+- **There is no model menu.** "Which model?" is the question `"auto"` answers for you, per request. The open-weights models auto routes across never appear in this list — they stay behind the one id, and you never see or pick a GPU.
+- **Calling a model is metered.** Listing is free, but each completion against `"auto"` debits your org balance — one debit per request, no matter how many internal model calls auto's plan makes. An empty balance raises `InsufficientCreditsError` (402) at call time. Top-up is browser-only.
 
 ## list
 
@@ -17,7 +15,7 @@ def list(self) -> ModelList
 
 **Route:** `GET /v1/models`
 
-Returns a [`ModelList`](#modellist) of every deployed endpoint that has a live inference URL. Endpoints that are stopped, cold, or still deploying are omitted, because they have no `url` and so cannot be called. There are no parameters and no pagination.
+Returns a [`ModelList`](#modellist) of the callable model ids — the single `"auto"` entry. There are no parameters and no pagination.
 
 ```python
 from pareta import Pareta
@@ -25,22 +23,17 @@ from pareta import Pareta
 with Pareta.from_env() as pa:          # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
     models = pa.models.list()          # ModelList
 
-    print(len(models), "callable models")
     for m in models:                   # ModelList is directly iterable
-        print(m.id, "·", m.owned_by)
+        print(m.id, "·", m.owned_by)   # auto · pareta
 ```
 
-`m.id` is exactly what you feed to inference. Listing and calling compose directly:
+`m.id` is exactly what you feed to inference. Listing and calling compose directly, which is the contract generic OpenAI tooling relies on:
 
 ```python
 with Pareta.from_env() as pa:
-    models = pa.models.list()
-    if len(models) == 0:
-        raise SystemExit("No live endpoints. Deploy one first: pa.endpoints.deploy(task=...)")
-
-    first = models.data[0]             # a Model
+    first = pa.models.list().data[0]   # the "auto" entry
     resp = pa.chat.completions.create(
-        model=first.id,                # the callable endpoint id
+        model=first.id,                # == "auto"
         messages=[{"role": "user", "content": "What is the invoice total?"}],
     )
     print(resp.choices[0].message.content)
@@ -69,14 +62,14 @@ The return value of `list()`. It wraps the raw `{"data": [...]}` payload and beh
 
 | Member | Type | Description |
 | --- | --- | --- |
-| `data` | `list[Model]` | The deployed, callable models. |
+| `data` | `list[Model]` | The callable model entries — `"auto"`. |
 | `__iter__()` | `Iterable[Model]` | Iterate models directly: `for m in models`. |
-| `__len__()` | `int` | Number of callable models: `len(models)`. |
+| `__len__()` | `int` | Number of entries: `len(models)`. |
 
 ```python
 models = pa.models.list()
 
-len(models)          # int: how many endpoints are live and callable
+len(models)          # int
 models.data          # list[Model]: the underlying list
 list(models)         # same elements, via __iter__
 [m.id for m in models]
@@ -92,34 +85,20 @@ One element of `ModelList.data`. It is the OpenAI-compatible model record, so it
 
 | Property | Type | Description |
 | --- | --- | --- |
-| `id` | `str \| None` | The endpoint id. Pass it as `chat.completions.create(model=...)`. |
-| `owned_by` | `str \| None` | `"pareta"` for your deployed open-weights endpoints, or a vendor name. |
-| `created` | `int \| None` | Unix timestamp (seconds) when the endpoint was created. |
+| `id` | `str \| None` | The model id — `"auto"`. Pass it as `chat.completions.create(model=...)`. |
+| `owned_by` | `str \| None` | `"pareta"`. |
+| `created` | `int \| None` | Unix timestamp (seconds). |
 
 ```python
 for m in pa.models.list():
     print(m.id)         # str | None: usable as the `model` arg in inference
-    print(m.owned_by)   # str | None: "pareta" or a vendor name
+    print(m.owned_by)   # str | None: "pareta"
     print(m.created)    # int | None: Unix seconds
 
     m.to_dict()         # full raw record, nothing lost behind the typed layer
 ```
 
-`Model.id` is a per-task alias, not the real open-weights model id. That is by design: the underlying model id never crosses into the SDK. You deploy with a task and an alias and you call with the resulting endpoint id; hardware is resolved for you. See [Core concepts](../guide/core-concepts.md) for the aliasing and GPU-hiding model.
-
-## How this differs from `endpoints.list()`
-
-Both list your fleet, but they answer different questions.
-
-| | `models.list()` | `endpoints.list()` |
-| --- | --- | --- |
-| Returns | `ModelList` of `Model` | `list[Endpoint]` |
-| Includes | Only live, url-bearing endpoints | All endpoints the org can access (any status) |
-| Fields | `id`, `owned_by`, `created` | `id`, `name`, `model`, `status`, `task`, `url`, `is_live` |
-| Use for | "What can I call right now?" | Deploy, start, stop, delete, inspect, metrics |
-| Shape | OpenAI-compatible | Pareta-native |
-
-If `models.list()` returns fewer entries than you expect, an endpoint is probably not live. Check its status with [`endpoints.list()`](../guide/deploying-endpoints.md) or `endpoints.retrieve(endpoint_id)`, and `endpoints.start(endpoint_id)` it if it is stopped.
+The ids of the open-weights models behind `"auto"` never cross into the SDK. That is by design: routing happens server-side, per request, and hardware is resolved for you. See [Core concepts](../guide/core-concepts.md) for the routing and metering model.
 
 ## Errors
 
@@ -141,7 +120,6 @@ except ParetaError as e:
 
 ## See also
 
-- [Running inference](../guide/inference.md) — pass a `Model.id` to `chat.completions.create`.
-- [Deploying endpoints](../guide/deploying-endpoints.md) — create the endpoints that show up here.
-- [Discovering tasks](../guide/discovery.md) — find a task and its recommended model before you deploy.
-- [Core concepts](../guide/core-concepts.md) — per-task aliases, hidden GPUs, and org-balance metering.
+- [Running inference](../guide/inference.md) — pass `"auto"` to `chat.completions.create`.
+- [`tasks`](./tasks.md) — browse and match the catalog of tasks auto routes across.
+- [Core concepts](../guide/core-concepts.md) — the routing brain, hidden models, and org-balance metering.

@@ -87,8 +87,9 @@ class RateLimitError(APIStatusError):        # 429
     pass
 
 
-class EndpointNotReadyError(APIStatusError):  # 503 — stopped / cold / provider down
-    """The target endpoint isn't serving yet (stopped, cold-starting, or provider down)."""
+class EndpointNotReadyError(APIStatusError):  # 503 — cold / provider down
+    """The serving capacity behind the request isn't ready yet (cold-starting
+    or provider down) — retryable."""
 
 
 def error_from_response(status_code: int, *, detail, request_id, response) -> APIStatusError:

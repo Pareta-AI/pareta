@@ -1,7 +1,8 @@
 """`client.chat.completions` — OpenAI-compatible chat completions.
 
-`model` is an endpoint id from `endpoints.deploy(...)` (or any model id the
-caller's org can reach). The call is metered: a successful completion debits the
+`model` is `"auto"` — Pareta's routing brain plans the request, routes it to
+the best model, verifies, and answers (`models.list()` shows anything else
+your org can reach). The call is metered: a successful completion debits the
 org's balance; a zero balance raises `InsufficientCreditsError` (402).
 """
 
@@ -16,7 +17,7 @@ _PATH = "/v1/chat/completions"
 
 def _build_body(model: str, messages: list[dict[str, Any]], stream: bool, extra: dict) -> dict:
     if not model:
-        raise ValueError("model is required (an endpoint id from endpoints.deploy)")
+        raise ValueError('model is required (use "auto")')
     if not messages:
         raise ValueError("messages is required and must be non-empty")
     body: dict[str, Any] = {"model": model, "messages": messages, **extra}

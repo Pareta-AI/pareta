@@ -8,22 +8,27 @@ path, request shape, and response shape it wraps.
 
 Reach for it when you are debugging a request in a proxy log, calling Pareta from
 a language without an SDK, or you just want to know what goes over the wire.
-Everywhere else, prefer the SDK: it handles auth, retries, SSE parsing, the cost
-flooring convention, and the per-task model aliasing for you.
+Everywhere else, prefer the SDK: it handles auth, retries, SSE parsing, and the
+cost flooring convention for you.
 
 A few platform truths shape every route below:
 
-- **GPUs are hidden.** `POST /v1/endpoints` takes a `task` and a `model`; it
-  never takes a GPU, tensor-parallel, or quantization knob. Pareta resolves the
-  serving hardware server-side.
-- **Models are per-task aliases.** Open-weights model ids are masked to
-  per-task public aliases on the way out. Real ids never cross this boundary.
-  Frontier (vendor) ids are in the clear.
+- **One model id.** Inference takes `model: "auto"` — the only entry
+  `GET /v1/models` returns. Every request is planned, routed to
+  benchmark-proven open specialists, verified, and falls back to a frontier
+  model when that's the right call. There is nothing to deploy, and no GPU,
+  hardware, or model knob anywhere on the wire; Pareta resolves all of it
+  server-side, per request.
+- **The models behind `auto` stay behind `auto`.** Which model served a given
+  request never crosses this boundary. Frontier (vendor) ids appear in the
+  clear only where you pick them deliberately: eval baselines and the frontier
+  compare.
 - **Inference and evals are metered against your org balance.**
-  `POST /v1/chat/completions` debits on success; `POST /v1/eval-runs` debits for
-  the open and frontier compute it runs. Numbered-task endpoints bill a flat
-  **per-request** rate; **capability** endpoints (chat/coding/agentic/vision)
-  bill **per token**; the speech routes (`/v1/audio/*`) bill **per minute** of
+  `POST /v1/chat/completions` debits **once per request** — however many
+  internal model calls auto's plan makes, orchestration overhead is Pareta's
+  cost, not yours. `POST /v1/eval-runs` debits for the auto and frontier
+  compute it runs; `POST /v1/playground/frontier` debits at the vendor's
+  actual token cost. The speech routes (`/v1/audio/*`) bill **per minute** of
   audio. An empty balance returns `402`. Top-up is browser-only; there is no
   balance or payment route.
 - **Inference is OpenAI-compatible.** `/v1/chat/completions` and `/v1/models`
@@ -37,7 +42,7 @@ A few platform truths shape every route below:
 | Base URL | `https://api.pareta.ai` (override with `PARETA_BASE_URL`) |
 | Prefix | `/v1/` |
 | Content type | `application/json` (JSON bodies); `multipart/form-data` for uploads |
-| Streaming | `text/event-stream` (chat streaming, deploy progress) |
+| Streaming | `text/event-stream` (chat streaming) |
 
 The SDK normalizes the base URL with `rstrip("/")`, so a trailing slash is
 harmless.
@@ -83,21 +88,11 @@ out. A key that reaches the server and is rejected returns `401`
 |---|---|---|
 | `chat.completions.create(...)` | `POST` | `/v1/chat/completions` |
 | `models.list()` | `GET` | `/v1/models` |
-| `endpoints.deploy(...)` | `POST` | `/v1/endpoints` (SSE) |
-| `endpoints.list()` | `GET` | `/v1/endpoints` |
-| `endpoints.retrieve(id)` | `GET` | `/v1/endpoints/{id}` |
-| `endpoints.start(id)` | `POST` | `/v1/endpoints/{id}/start` |
-| `endpoints.stop(id)` | `POST` | `/v1/endpoints/{id}/stop` |
-| `endpoints.delete(id)` | `DELETE` | `/v1/endpoints/{id}` |
-| `endpoints.metrics(id).performance(...)` | `GET` | `/v1/endpoints/{id}/performance` |
-| `endpoints.metrics(id).uptime(...)` | `GET` | `/v1/endpoints/{id}/uptime` |
-| `endpoints.metrics(id).cost(...)` | `GET` | `/v1/endpoints/{id}/cost` |
-| `endpoints.metrics(id).quality(...)` | `GET` | `/v1/endpoints/{id}/quality` |
-| `endpoints.metrics(id).activity(...)` | `GET` | `/v1/endpoints/{id}/activity` |
 | `tasks.list()` | `GET` | `/v1/tasks` |
 | `tasks.retrieve(id)` | `GET` | `/v1/tasks/{id}` |
 | `tasks.match(query)` | `POST` | `/v1/tasks/match` |
-| `tasks.leaderboard(id)` / `tasks.recommended(id)` | `GET` | `/v1/tasks/{id}/leaderboard` |
+| `auto.metrics()` | `GET` | `/v1/auto/metrics` |
+| `auto.compare_frontier(...)` | `POST` | `/v1/playground/frontier` |
 | `audio.transcriptions(audio)` | `POST` | `/v1/audio/transcriptions` |
 | `audio.speech(text)` | `POST` | `/v1/audio/speech` |
 | `evals.frontier_models(task)` | `GET` | `/v1/eval/frontier-models` |
@@ -115,21 +110,18 @@ out. A key that reaches the server and is rejected returns `401`
 
 OpenAI-compatible chat completions. Wrapped by
 [`chat.completions.create()`](../guide/inference.md). Metered: a successful
-completion debits the org balance, and an empty balance returns `402`
-(`InsufficientCreditsError`). A numbered-task endpoint is billed its flat
-per-request rate; a **capability** endpoint (chat/coding/agentic/vision) is
-billed **per token** (`total_tokens × rate`) instead, since its request shape is
-open-ended.
+completion debits the org balance **once per request** — however many internal
+model calls auto's plan makes, orchestration overhead is Pareta's cost, not
+yours — and an empty balance returns `402` (`InsufficientCreditsError`).
 
-`model` is an endpoint id from a deploy (or any model id your org can reach).
-Extra OpenAI fields (`temperature`, `max_tokens`, `top_p`, ...) pass straight
-through as body fields.
+`model` is `"auto"`. Extra OpenAI fields (`temperature`, `max_tokens`,
+`top_p`, ...) pass straight through as body fields.
 
 Request body:
 
 ```json
 {
-  "model": "ep_contract_kie",
+  "model": "auto",
   "messages": [{"role": "user", "content": "Extract the parties."}],
   "temperature": 0.0
 }
@@ -140,7 +132,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     resp = pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Extract the parties."}],
         temperature=0.0,
     )
@@ -155,7 +147,7 @@ curl https://api.pareta.ai/v1/chat/completions \
   -H "Authorization: Bearer $PARETA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "ep_contract_kie",
+    "model": "auto",
     "messages": [{"role": "user", "content": "Extract the parties."}]
   }'
 ```
@@ -179,7 +171,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     for chunk in pa.chat.completions.create(
-        model="ep_contract_kie",
+        model="auto",
         messages=[{"role": "user", "content": "Summarize the contract."}],
         stream=True,
     ):
@@ -193,9 +185,9 @@ mid-stream drop raises immediately (`APIConnectionError`) and cannot be resumed.
 
 ### `GET /v1/models`
 
-OpenAI-compatible model listing. Wrapped by `models.list()`. Returns only
-deployed, url-bearing endpoints (the OpenAI-compatible subset), shaped as
-`{"data": [{"id", "owned_by", "created"}, ...]}`. Each `id` is usable as
+OpenAI-compatible model listing. Wrapped by `models.list()`. Returns exactly
+one entry — `"auto"` — shaped as
+`{"data": [{"id", "owned_by", "created"}, ...]}`. The `id` is what you pass to
 `chat.completions.create(model=...)`.
 
 ```python
@@ -205,135 +197,6 @@ with Pareta.from_env() as pa:
     models = pa.models.list()          # ModelList (iterable, has len)
     for m in models:
         print(m.id, m.owned_by)        # Model
-```
-
-## Endpoints
-
-### `POST /v1/endpoints` (SSE)
-
-Deploy a model for a task. Wrapped by
-[`endpoints.deploy()`](../guide/deploying-endpoints.md). No hardware knob:
-the body is `{task, model, ...}` and Pareta resolves the serving class. `model`
-defaults to `"recommended"` (the task's curated or leaderboard-top open pick);
-you may also pass a per-task alias or a real id.
-
-Request body:
-
-```json
-{"task": "contract-key-fields", "model": "recommended"}
-```
-
-The response is a **named-event** SSE stream (distinct from the chat stream's
-data-only format):
-
-```
-event: progress
-data: {"stage": "pulling weights", "pct": 45}
-
-event: complete
-data: {"endpoint": {"id": "ep_...", "status": "live", "url": "https://..."}}
-
-event: error
-data: {"message": "out of memory"}
-```
-
-With `wait=False` (default) the SDK yields `{"event": str, "data": dict}` tuples
-so you can drive a progress bar. With `wait=True` it consumes the stream
-internally and returns the live `Endpoint` on the `complete` event, raising
-`ParetaError` on `error`.
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    # Stream progress yourself:
-    for ev in pa.endpoints.deploy(task="contract-key-fields"):
-        if ev["event"] == "progress":
-            print(ev["data"])
-
-    # Or block until live:
-    ep = pa.endpoints.deploy(task="contract-key-fields", model="recommended", wait=True)
-    print(ep.id, ep.is_live, ep.url)   # Endpoint
-```
-
-Extra deploy parameters (`cost_per_request_micro_usd`,
-`frontier_cost_per_request_micro_usd`, `region`, `provider`, `quality`,
-`run_mode`, `taskDisplay`) pass through as body fields when present.
-
-### `GET /v1/endpoints`
-
-List every endpoint your org can access. Wrapped by `endpoints.list()`. Returns
-a bare JSON array of endpoint records; the SDK maps each to an `Endpoint`. The
-`model` field on each is the per-task public alias.
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    for ep in pa.endpoints.list():
-        print(ep.id, ep.status, ep.model)   # Endpoint
-```
-
-### `GET /v1/endpoints/{endpoint_id}`
-
-Retrieve one endpoint. Wrapped by `endpoints.retrieve(endpoint_id)`. Returns the
-endpoint record as an `Endpoint`. A wrong id returns `404` (`NotFoundError`).
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    ep = pa.endpoints.retrieve("ep_contract_kie")
-    print(ep.is_live)   # status == "live"
-```
-
-### `POST /v1/endpoints/{endpoint_id}/start` and `/stop`
-
-Start a stopped endpoint, or stop a live one. Wrapped by
-`endpoints.start(endpoint_id)` and `endpoints.stop(endpoint_id)`. Both take only
-the endpoint id (no GPU knob) and return the raw JSON status body.
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    pa.endpoints.start("ep_contract_kie")   # warm a cold endpoint
-    pa.endpoints.stop("ep_contract_kie")    # scale to zero
-```
-
-### `DELETE /v1/endpoints/{endpoint_id}`
-
-Remove an endpoint. Wrapped by `endpoints.delete(endpoint_id)`, which returns
-`None`.
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    pa.endpoints.delete("ep_contract_kie")
-```
-
-### Endpoint metrics
-
-Five read-only dimensions hang off `endpoints.metrics(endpoint_id)`. Each method
-issues a `GET` and returns the raw metric JSON (typed models are forthcoming).
-All accept arbitrary query params via `**params`, which become the query string.
-
-| SDK call | Method | Path | What it returns |
-|---|---|---|---|
-| `.performance(**params)` | `GET` | `/v1/endpoints/{id}/performance` | p50/p95/p99 latency |
-| `.uptime(**params)` | `GET` | `/v1/endpoints/{id}/uptime` | availability metrics |
-| `.cost(**params)` | `GET` | `/v1/endpoints/{id}/cost` | per-endpoint spend + vs-frontier savings |
-| `.quality(**params)` | `GET` | `/v1/endpoints/{id}/quality` | judge windows |
-| `.activity(**params)` | `GET` | `/v1/endpoints/{id}/activity` | usage stats |
-
-```python
-from pareta import Pareta
-
-with Pareta.from_env() as pa:
-    m = pa.endpoints.metrics("ep_contract_kie")
-    print(m.performance())          # GET /v1/endpoints/ep_contract_kie/performance
-    print(m.cost(window="7d"))      # ?window=7d
 ```
 
 ## Tasks (benchmark catalog)
@@ -393,34 +256,59 @@ with Pareta.from_env() as pa:
         print(c.task_id, c.score)
 ```
 
-### `GET /v1/tasks/{task_id}/leaderboard`
+## Auto (metrics and frontier compare)
 
-Models ranked by quality and cost for a task, plus the `recommended` alias and a
-`frontier` baseline entry. Wrapped by two sync methods:
+The routes around the `model: "auto"` call itself: an org-level rollup of your
+auto traffic, and a metered one-prompt comparison against a frontier vendor.
+The SDK wraps both in the `pa.auto` namespace.
 
-- `tasks.leaderboard(task_id)` returns the full `Leaderboard`.
-- `tasks.recommended(task_id)` is a convenience that returns
-  `leaderboard(task_id).recommended` (the deployable model id to pass to
-  `endpoints.deploy(model=...)`).
+### `GET /v1/auto/metrics`
 
-Leaderboard rows carry `cost_per_request_micro_usd` as raw micro-USD (not floored
-to cents). Open-model rows are aliases; the `frontier` baseline is a vendor id.
+Your org's `model: "auto"` traffic, rolled up. Wrapped by `auto.metrics()`,
+which returns the raw JSON dict: requests + success rate (30d), billed spend,
+hourly p50/p95/error buckets (7d), daily success cells (30d), and the
+**projected** savings vs frontier (a frontier list-priced counterfactual,
+labeled as projected in the dashboard too).
 
 ```python
 from pareta import Pareta
 
 with Pareta.from_env() as pa:
-    lb = pa.tasks.leaderboard("contract-key-fields")
-    print(lb.recommended, lb.metric, lb.cost_unit)
-    for entry in lb.models:           # LeaderboardEntry
-        print(entry.name, entry.kind, entry.quality, entry.cost_per_request_micro_usd)
-
-    best = pa.tasks.recommended("contract-key-fields")
-    ep = pa.endpoints.deploy(task="contract-key-fields", model=best, wait=True)
+    m = pa.auto.metrics()
+    print(m["requests_30d"], m["success_rate_30d"])
+    print(m["savings_vs_frontier_micro_usd_30d"])   # projected, micro-USD
 ```
 
-> `tasks.leaderboard()` and `tasks.recommended()` exist on the sync client only;
-> the async `AsyncTasks` has `list`, `retrieve`, and `match`.
+### `POST /v1/playground/frontier`
+
+Run one prompt against a frontier vendor for a side-by-side with
+`model: "auto"`. Wrapped by `auto.compare_frontier(model=..., messages=...)`.
+Allowed `model` values: `gpt-5.5`, `gemini-3-5-flash`, `gemini-3-1-pro`,
+`claude-sonnet-4-6` (anything else returns `400`); `messages` takes 1–40
+entries. Metered at the vendor's **actual token cost** — one debit per call; a
+failed vendor call returns `502` and bills $0. An empty balance returns `402`.
+
+Request body:
+
+```json
+{
+  "model": "gpt-5.5",
+  "messages": [{"role": "user", "content": "Extract the parties."}]
+}
+```
+
+Returns `{"model": ..., "content": ..., "cost_micro_usd": ..., "latency_ms": ...}`.
+
+```python
+from pareta import Pareta
+
+with Pareta.from_env() as pa:
+    side = pa.auto.compare_frontier(
+        model="gpt-5.5",
+        messages=[{"role": "user", "content": "Extract the parties."}],
+    )
+    print(side["content"], side["cost_micro_usd"], side["latency_ms"])
+```
 
 ## Speech (audio)
 
@@ -476,8 +364,8 @@ The vendor frontier roster you can evaluate against. Wrapped by
 `evals.frontier_models(task=None)`. The server returns
 `{"frontier_models": [...]}`; the SDK maps each to a `FrontierModel`
 (`id`, `vendor`, `vision`, `benchmarked`). Pass `task` to annotate `benchmarked`
-(on that task's leaderboard) and vision-filter for document tasks. Feed the ids
-into `evals.runs.create(frontier=[...])`.
+(already benchmarked on that task) and vision-filter for document tasks. Feed
+the ids into `evals.runs.create(frontier=[...])`.
 
 ```python
 from pareta import Pareta
@@ -576,23 +464,23 @@ with Pareta.from_env() as pa:
 Start an eval run. Wrapped by
 [`evals.runs.create(...)`](../guide/evaluation.md). Pass either an existing
 `eval_set=<id>` or an inline `task=...` + `items=...` (which the SDK turns into an
-eval set first). `models` is the list of open-candidate aliases to evaluate;
-`frontier` adds vendor baselines.
+eval set first). `models` is the list of candidate ids to evaluate — pass
+`["auto"]`; `frontier` adds vendor baselines.
 
 The SDK resolves `frontier` to a list of ids before sending, then posts
-`{"eval_set_id": ..., "candidate_model_ids": [...open..., ...frontier...]}`:
+`{"eval_set_id": ..., "candidate_model_ids": ["auto", ...frontier...]}`:
 
 | `frontier=` value | Resolves to |
 |---|---|
 | `None` or `"none"` | `[]` (no baselines) |
 | list of ids | the list, as-is |
 | `"all"` | every id from `GET /v1/eval/frontier-models?task=...` |
-| `"benchmarked"` | frontier models on the task's leaderboard |
+| `"benchmarked"` | frontier models already benchmarked on the task |
 
 A keyword (`"all"` / `"benchmarked"`) needs the task; if you passed `eval_set=`
 only, the SDK looks up its `task_id` to resolve the roster, and raises
-`ValueError` if the task is unknown. Metered: the org balance is debited for open
-and frontier compute, and an empty balance returns `402`.
+`ValueError` if the task is unknown. Metered: the org balance is debited for
+auto and frontier compute, and an empty balance returns `402`.
 
 The server responds with `{"run_id": ..., "status": ...}`. With `wait=False`
 the SDK returns an `EvalRun` in its initial (running/queued) state. With
@@ -608,8 +496,8 @@ with Pareta.from_env() as pa:
     run = pa.evals.runs.create(
         task="contract-key-fields",
         items=[{"input": "Agreement between A and B...", "expected": {"parties": ["A", "B"]}}],
-        models=["contract-1", "contract-2"],   # open-model aliases
-        frontier="benchmarked",                 # vendor baselines on the leaderboard
+        models=["auto"],                        # the candidate under test
+        frontier="benchmarked",                 # vendor baselines benchmarked on the task
         wait=True,
     )
     print(run.status, run.cost)                 # "completed" Decimal("0.42")
@@ -627,7 +515,7 @@ Retrieve full run state, including per-model results once terminal. Wrapped by
 `EvalRun.cost` is the billed total as `Decimal` dollars **floored to cents**
 (never rounded up), while `EvalRun.cost_micro_usd` keeps the raw integer
 micro-USD value. A 5 micro-USD run reads `Decimal("0.00")`. Per-item unit rates
-such as `EvalResult.mean_cost_micro_usd` stay in micro-USD so the open-vs-frontier
+such as `EvalResult.mean_cost_micro_usd` stay in micro-USD so the auto-vs-frontier
 comparison is not erased by flooring.
 
 ```python
@@ -655,10 +543,10 @@ standard HTTP status. The SDK maps each status to a specific
 | 401 | `AuthenticationError` | invalid or missing API key |
 | 402 | `InsufficientCreditsError` | org out of balance (top up in the dashboard) |
 | 403 | `PermissionDeniedError` | authenticated, not allowed |
-| 404 | `NotFoundError` | endpoint / eval set / run / task id not found |
-| 409 | `ConflictError` | seed endpoint, transient lock/contention |
+| 404 | `NotFoundError` | eval set / run / task id not found |
+| 409 | `ConflictError` | transient lock/contention |
 | 429 | `RateLimitError` | rate limited |
-| 503 | `EndpointNotReadyError` | endpoint stopped, cold, or provider down |
+| 503 | `EndpointNotReadyError` | a serving backend behind `auto` is warming or briefly unavailable (retried automatically) |
 | other 5xx | `APIStatusError` | generic server error |
 
 Each `APIStatusError` exposes `status_code`, `detail`, `request_id` (from the
@@ -681,7 +569,7 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         models = await pa.models.list()                 # GET /v1/models
         async for chunk in await pa.chat.completions.create(  # POST /v1/chat/completions
-            model="ep_contract_kie",
+            model="auto",
             messages=[{"role": "user", "content": "Extract the parties."}],
             stream=True,
         ):
@@ -695,9 +583,8 @@ asyncio.run(main())
 ## See also
 
 - [Inference](../guide/inference.md) — OpenAI-compatible chat completions and streaming
-- [Deploying endpoints](../guide/deploying-endpoints.md) — `deploy`, `start`/`stop`, and `is_live`
 - [Evaluation](../guide/evaluation.md) — eval sets, runs, `wait`, and `run.cost`
-- [Discovery](../guide/discovery.md) — the benchmark catalog, `match()`, and leaderboards
+- [Tasks](tasks.md) — the benchmark catalog and `match()`
 - [Errors, retries & timeouts](../guide/errors-and-retries.md) — the full exception hierarchy
 - [Async](../guide/async.md) — the `AsyncPareta` client end to end
 - [Configuration](../guide/configuration.md) — base URL, keys, timeout, and retry budget

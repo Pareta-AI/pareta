@@ -1,17 +1,17 @@
 # Running inference
 
-Once you have a live endpoint, you call it through `chat.completions.create`, which has the same shape as the OpenAI chat completions API. Pass the endpoint id as `model`, a list of messages, and you get a `ChatCompletion` back. Set `stream=True` and you get an iterator of token deltas instead.
+You run inference through `chat.completions.create`, which has the same shape as the OpenAI chat completions API. Pass `model="auto"`, a list of messages, and you get a `ChatCompletion` back. Set `stream=True` and you get an iterator of token deltas instead.
 
-Pareta is OpenAI-compatible on the wire, so you can run inference with this SDK, with the `openai` package, or with raw HTTP, whichever fits your stack. This SDK's extra value is the control plane (deploy, eval, discover); for plain inference the two are interchangeable.
+Pareta is OpenAI-compatible on the wire, so you can run inference with this SDK, with the `openai` package, or with raw HTTP, whichever fits your stack. This SDK's extra value is the control plane (evals, task match, auto metrics); for plain inference the two are interchangeable.
 
 A few platform truths that shape this page:
 
-- **Models are per-task aliases.** The `model` you pass is an endpoint id from [deploy](deploying-endpoints.md), or a callable model alias. Real open-weights model ids never reach you; the backend resolves them. You never pick a GPU.
-- **Inference is metered against your org balance.** A successful completion debits your balance. If the balance is empty, the call raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK has no balance or payment surface.
+- **There is no model to pick.** `model` is the literal string `"auto"`; Pareta routes each request behind it. Real open-weights model ids never reach you; the backend resolves them. You never pick a GPU.
+- **Inference is metered against your org balance.** A successful completion debits your balance — one debit per request, no matter how many internal model calls auto's plan makes. If the balance is empty, the call raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK has no balance or payment surface.
 
 ## `model="auto"` — the routing brain
 
-The recommended model id for every request is the literal string `"auto"`.
+The model id for every request is the literal string `"auto"`.
 Pareta decomposes the request, routes each part to the cheapest model that
 holds frontier-grade quality, verifies checkable outputs (escalating to a
 frontier model on a failed check), and synthesizes one answer. One request,
@@ -27,8 +27,8 @@ completion = client.chat.completions.create(
 )
 ```
 
-Pass a specific endpoint id instead of `"auto"` only when you deliberately
-want one pinned model — everything below applies to both.
+Everything below — setup, streaming, async, errors — is that one call in
+different shapes.
 
 ## Setup
 
@@ -58,7 +58,7 @@ const pa = Pareta.fromEnv();   // reads PARETA_API_KEY (+ optional PARETA_BASE_U
 
 ## A basic completion
 
-Pass an endpoint id as `model` and a non-empty `messages` list in OpenAI format. You get back a `ChatCompletion`.
+Pass `model="auto"` and a non-empty `messages` list in OpenAI format. You get back a `ChatCompletion`.
 
 **Python**
 
@@ -67,7 +67,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     resp = pa.chat.completions.create(
-        model="ep_invoice_xtract",   # an endpoint id from endpoints.deploy()
+        model="auto",   # the routing brain — the only model id
         messages=[
             {"role": "system", "content": "You extract structured fields from documents."},
             {"role": "user", "content": "What is the invoice total?\n\nINVOICE\nTotal due: $4,210.00"},
@@ -85,7 +85,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_xtract",   // an endpoint id from endpoints.deploy()
+  model: "auto",   // the routing brain — the only model id
   messages: [
     { role: "system", content: "You extract structured fields from documents." },
     { role: "user", content: "What is the invoice total?\n\nINVOICE\nTotal due: $4,210.00" },
@@ -95,12 +95,6 @@ const resp = await pa.chat.completions.create({
 console.log(resp.choices[0].message.content);
 console.log(resp.usage.totalTokens, "tokens");
 ```
-
-Where does the `model` value come from? Three sources, all interchangeable here:
-
-- An endpoint id you deployed. See [Deploying endpoints](deploying-endpoints.md).
-- Any id returned by `pa.models.list()` (see [Listing models](#listing-callable-models) below).
-- A per-task model alias. The recommended pick for a task is `pa.tasks.recommended(task_id)`; see [Discovering tasks](discovery.md).
 
 `model` and `messages` are both required. The SDK raises `ValueError` before sending if `model` is falsy or `messages` is empty, so a malformed call fails fast without burning a request.
 
@@ -112,7 +106,7 @@ Where does the `model` value come from? Three sources, all interchangeable here:
 
 ```python
 resp.id                              # str | None
-resp.model                           # str | None: the alias that served the call
+resp.model                           # str | None: echoes "auto"
 resp.created                         # int | None: Unix timestamp
 resp.choices                         # list[Choice]
 resp.choices[0].index                # int | None
@@ -128,7 +122,7 @@ resp.usage.total_tokens              # int | None
 
 ```typescript
 resp.id                              // string | null
-resp.model                           // string | null: the alias that served the call
+resp.model                           // string | null: echoes "auto"
 resp.created                         // number | null: Unix timestamp
 resp.choices                         // Choice[]
 resp.choices[0].index                // number | null
@@ -150,7 +144,7 @@ Any extra keyword you pass goes straight into the request body, so the full Open
 
 ```python
 resp = pa.chat.completions.create(
-    model="ep_invoice_xtract",
+    model="auto",
     messages=[{"role": "user", "content": "Summarize this contract clause: ..."}],
     temperature=0.2,
     max_tokens=512,
@@ -162,7 +156,7 @@ resp = pa.chat.completions.create(
 
 ```typescript
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_xtract",
+  model: "auto",
   messages: [{ role: "user", content: "Summarize this contract clause: ..." }],
   temperature: 0.2,
   max_tokens: 512,
@@ -181,7 +175,7 @@ Set `stream=True` and `create()` returns an iterator of `ChatCompletionChunk` ob
 ```python
 with Pareta.from_env() as pa:
     stream = pa.chat.completions.create(
-        model="ep_invoice_xtract",
+        model="auto",
         messages=[{"role": "user", "content": "Draft a one-paragraph status update."}],
         stream=True,
     )
@@ -195,7 +189,7 @@ with Pareta.from_env() as pa:
 ```typescript
 const pa = Pareta.fromEnv();
 const stream = pa.chat.completions.create({
-  model: "ep_invoice_xtract",
+  model: "auto",
   messages: [{ role: "user", content: "Draft a one-paragraph status update." }],
   stream: true,
 });
@@ -208,33 +202,6 @@ console.log();
 `ChatCompletionChunk` has the same schema as `ChatCompletion`; it exists as a distinct type only for hinting. Guard `delta.content` with `or ""`: the first and last chunks of a stream often carry role or finish metadata with no text.
 
 The stream is data-only SSE and always terminates on a `[DONE]` sentinel, which the SDK consumes for you, so the iterator simply ends. Note that retries only cover the initial handshake. Once tokens are flowing, a mid-stream drop raises immediately rather than silently resuming.
-
-## Listing callable models
-
-`models.list()` returns the OpenAI-compatible model list: only your deployed, url-bearing endpoints. Use it to discover ids you can pass to `create(model=...)`.
-
-**Python**
-
-```python
-with Pareta.from_env() as pa:
-    models = pa.models.list()         # ModelList
-    print(len(models))                # number of callable endpoints
-    for m in models:                  # iterates Model objects
-        print(m.id, m.owned_by)       # m.id is usable as chat.completions.create(model=...)
-```
-
-**TypeScript**
-
-```typescript
-const pa = Pareta.fromEnv();
-const models = await pa.models.list();   // ModelList
-console.log(models.length);              // number of callable endpoints
-for (const m of models) {                // iterates Model objects
-  console.log(m.id, m.ownedBy);          // m.id is usable as chat.completions.create({ model })
-}
-```
-
-`ModelList` is iterable and has a length. Each `Model` exposes `.id` (the callable endpoint id), `.owned_by` (`"pareta"` or a vendor name), and `.created`. This is the inference-time view; to manage endpoint lifecycle (start, stop, metrics) use the [endpoints](deploying-endpoints.md) namespace.
 
 ## Async
 
@@ -250,14 +217,14 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         # Non-streaming
         resp = await pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "What is the invoice total?"}],
         )
         print(resp.choices[0].message.content)
 
         # Streaming
         stream = await pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "Stream me a haiku about ledgers."}],
             stream=True,
         )
@@ -280,14 +247,14 @@ const pa = Pareta.fromEnv();
 
 // Non-streaming
 const resp = await pa.chat.completions.create({
-  model: "ep_invoice_xtract",
+  model: "auto",
   messages: [{ role: "user", content: "What is the invoice total?" }],
 });
 console.log(resp.choices[0].message.content);
 
 // Streaming
 const stream = pa.chat.completions.create({
-  model: "ep_invoice_xtract",
+  model: "auto",
   messages: [{ role: "user", content: "Stream me a haiku about ledgers." }],
   stream: true,
 });
@@ -307,13 +274,13 @@ Two error cases are specific to running inference. Both subclass `ParetaError`, 
 from pareta import (
     Pareta,
     InsufficientCreditsError,   # 402: org balance empty
-    EndpointNotReadyError,      # 503: endpoint stopped / cold / provider down
+    EndpointNotReadyError,      # 503: a serving backend is warming / briefly unavailable
 )
 
 with Pareta.from_env() as pa:
     try:
         resp = pa.chat.completions.create(
-            model="ep_invoice_xtract",
+            model="auto",
             messages=[{"role": "user", "content": "Hello"}],
         )
         print(resp.choices[0].message.content)
@@ -322,9 +289,9 @@ with Pareta.from_env() as pa:
         # the SDK exposes no balance or payment surface.
         print("Out of credit. Top up in the dashboard, then retry.")
     except EndpointNotReadyError:
-        # The endpoint is stopped or cold-starting. Start it and wait for live.
-        pa.endpoints.start("ep_invoice_xtract")
-        print("Endpoint was not ready; started it, retry shortly.")
+        # A serving backend behind auto is warming. The SDK already retried
+        # the 503 with backoff; wait briefly and retry the call.
+        print("Backend warming — retry shortly.")
 ```
 
 **TypeScript**
@@ -333,13 +300,13 @@ with Pareta.from_env() as pa:
 import {
   Pareta,
   InsufficientCreditsError,   // 402: org balance empty
-  EndpointNotReadyError,      // 503: endpoint stopped / cold / provider down
+  EndpointNotReadyError,      // 503: a serving backend is warming / briefly unavailable
 } from "pareta";
 
 const pa = Pareta.fromEnv();
 try {
   const resp = await pa.chat.completions.create({
-    model: "ep_invoice_xtract",
+    model: "auto",
     messages: [{ role: "user", content: "Hello" }],
   });
   console.log(resp.choices[0].message.content);
@@ -349,9 +316,9 @@ try {
     // the SDK exposes no balance or payment surface.
     console.log("Out of credit. Top up in the dashboard, then retry.");
   } else if (e instanceof EndpointNotReadyError) {
-    // The endpoint is stopped or cold-starting. Start it and wait for live.
-    await pa.endpoints.start("ep_invoice_xtract");
-    console.log("Endpoint was not ready; started it, retry shortly.");
+    // A serving backend behind auto is warming. The SDK already retried
+    // the 503 with backoff; wait briefly and retry the call.
+    console.log("Backend warming — retry shortly.");
   } else {
     throw e;
   }
@@ -362,7 +329,7 @@ Transient failures (429 rate limits, 5xx, connection timeouts) are retried autom
 
 ## Using the OpenAI SDK instead
 
-Because the endpoint is OpenAI-compatible, you don't need this SDK to *call* it. Point the `openai` client at Pareta's base URL with your `pareta_sk_` key. Note the `/v1` suffix the OpenAI client expects:
+Because Pareta is one OpenAI-compatible endpoint, you don't need this SDK to *call* it. Point the `openai` client at Pareta's base URL with your `pareta_sk_` key. Note the `/v1` suffix the OpenAI client expects:
 
 **Python**
 
@@ -372,7 +339,7 @@ from openai import OpenAI
 client = OpenAI(api_key="pareta_sk_...", base_url="https://api.pareta.ai/v1")
 
 resp = client.chat.completions.create(
-    model="ep_invoice_xtract",
+    model="auto",
     messages=[{"role": "user", "content": "What is the invoice total?"}],
 )
 print(resp.choices[0].message.content)
@@ -386,10 +353,12 @@ import OpenAI from "openai";
 const client = new OpenAI({ apiKey: "pareta_sk_...", baseURL: "https://api.pareta.ai/v1" });
 
 const resp = await client.chat.completions.create({
-  model: "ep_invoice_xtract",
+  model: "auto",
   messages: [{ role: "user", content: "What is the invoice total?" }],
 });
 console.log(resp.choices[0].message.content);
 ```
 
-Streaming, `temperature`, `max_tokens`, and the rest work exactly as they do against OpenAI. Metering still applies: a zero balance returns a 402, which the `openai` client surfaces as its own status error. Reach for the Pareta SDK when you want the control plane: [deploying endpoints](deploying-endpoints.md), [discovering tasks](discovery.md), and [running evals](evaluation.md).
+Tooling that discovers model ids by listing keeps working too: `models.list()` (`GET /v1/models`) returns exactly one entry, `"auto"` — there is only one model id to call. Field details in the [models reference](../reference/models.md).
+
+Streaming, `temperature`, `max_tokens`, and the rest work exactly as they do against OpenAI. Metering still applies: a zero balance returns a 402, which the `openai` client surfaces as its own status error. Reach for the Pareta SDK when you want typed errors and the control plane: matching intent to the task catalog ([core concepts](core-concepts.md)) and [running evals](evaluation.md).

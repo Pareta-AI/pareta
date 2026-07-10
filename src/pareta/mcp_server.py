@@ -1,9 +1,16 @@
 """Pareta MCP server — drive Pareta from an AI agent (Claude Desktop, Cursor, …).
 
-Exposes the SDK's control plane (discovery, provisioning, eval) plus metered
-inference as Model Context Protocol tools over stdio. The agent calls these
-tools; the MCP client gates each call behind its own per-tool approval, which is
-the only guardrail on the provisioning verbs (deploy / start / stop / delete).
+Exposes Pareta as Model Context Protocol tools over stdio, auto-first:
+
+- inference: `chat` (model:"auto" — the routing brain — by default)
+- proof: `run_eval` / `get_eval_run` (benchmark "auto" against frontier
+  models on the user's own data), `auto_metrics`, `compare_frontier`
+- discovery: `match_task`, `list_tasks`, `get_task`, `list_models`
+- audio: `transcribe`, `speak`
+
+The agent calls these tools; the MCP client gates each call behind its own
+per-tool approval, which is the only guardrail on the metered verbs (chat,
+evals, audio, compare_frontier).
 
 Install + register (run it in its own isolated env — like any MCP server)
 -------------------------------------------------------------------------
@@ -67,8 +74,8 @@ def _client() -> Pareta:
 
 
 def _guard(fn: F) -> F:
-    """Wrap a tool body so any `ParetaError` (missing key, HTTP error, deploy
-    failure, …) is returned as an `{"error": …}` dict instead of raising — the
+    """Wrap a tool body so any `ParetaError` (missing key, HTTP error, …) is
+    returned as an `{"error": …}` dict instead of raising — the
     agent reads a clean message rather than a traceback."""
 
     @wraps(fn)
@@ -91,7 +98,8 @@ def match_task(query: str, top_k: int = 5) -> dict[str, Any]:
     (e.g. "extract fields from invoices"). Returns the router's outcome `type`
     ('task' | 'capability' | 'unsupported' | 'none'), the chosen task id (when
     a benchmarked task fits), the matched capability lane, and the reasoning.
-    Feed `chosen.task_id` into `get_leaderboard` / `deploy_endpoint`.
+    Feed `chosen.task_id` into `run_eval` to prove model="auto" on the user's
+    own data; inference itself is just `chat` (model="auto").
     """
     return _client().tasks.match(query, top_k=top_k).to_dict()
 
@@ -100,7 +108,7 @@ def match_task(query: str, top_k: int = 5) -> dict[str, Any]:
 @_guard
 def list_tasks() -> dict[str, Any]:
     """List every benchmarked task in the Pareta catalog (id, scorer, whether it
-    takes a document/image input). Browse this to find a task to deploy or eval."""
+    takes a document/image input). Browse this to find a task to eval on."""
     tasks = _client().tasks.list()
     return {"tasks": [t.to_dict() for t in tasks]}
 
@@ -115,108 +123,12 @@ def get_task(task_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 @_guard
-def get_leaderboard(task_id: str) -> dict[str, Any]:
-    """Get the quality/cost leaderboard for a task: open models ranked, the
-    recommended deployable pick, and the frontier (vendor) savings baseline.
-    Read this to choose which model to deploy and to see expected quality."""
-    return _client().tasks.leaderboard(task_id).to_dict()
-
-
-@mcp.tool()
-@_guard
-def recommended_model(task_id: str) -> dict[str, Any]:
-    """The model id that `deploy_endpoint(model='recommended')` resolves to for a
-    task. Inspect it before committing to a deploy. Returns `{"recommended": …}`
-    (null if the task has no recommended pick)."""
-    return {"task_id": task_id, "recommended": _client().tasks.recommended(task_id)}
-
-
-@mcp.tool()
-@_guard
 def list_models() -> dict[str, Any]:
-    """List the deployed, callable models (endpoints) your org can reach right
-    now. Each `id` is usable as the `model` argument to `chat`. OpenAI-compatible
-    — only live, url-bearing endpoints appear."""
+    """List the models your org can reach right now. Each `id` is usable as the
+    `model` argument to `chat` (OpenAI-compatible), though `model="auto"` — the
+    routing brain — is the recommended surface."""
     models = _client().models.list()
     return {"data": [m.to_dict() for m in models.data]}
-
-
-# ── provisioning ───────────────────────────────────────────────────────────
-@mcp.tool()
-@_guard
-def deploy_endpoint(task: str, model: str = "recommended", name: str | None = None) -> dict[str, Any]:
-    """Deploy a model for a task and BLOCK until it is live, returning the
-    endpoint record (its `id` is the `model` you pass to `chat`).
-
-    Pareta picks the GPU and serving config — you never specify hardware. `model`
-    defaults to the task's recommended pick; pass an explicit model id (see
-    `get_leaderboard`) to override. PROVISIONING ACTION: this spins up paid GPU
-    capacity; the deploy can take minutes. `name` optionally labels the endpoint.
-    """
-    endpoint = _client().endpoints.deploy(task=task, model=model, name=name, wait=True)
-    return endpoint.to_dict()
-
-
-@mcp.tool()
-@_guard
-def list_endpoints() -> dict[str, Any]:
-    """List all of your org's endpoints with their status (live / stopped / …),
-    task, and public model alias. Use this to find an endpoint id to operate."""
-    endpoints = _client().endpoints.list()
-    return {"endpoints": [e.to_dict() for e in endpoints]}
-
-
-@mcp.tool()
-@_guard
-def get_endpoint(endpoint_id: str) -> dict[str, Any]:
-    """Retrieve one endpoint's full record (status, task, url, recommended
-    prompt) by id."""
-    return _client().endpoints.retrieve(endpoint_id).to_dict()
-
-
-@mcp.tool()
-@_guard
-def start_endpoint(endpoint_id: str) -> dict[str, Any]:
-    """Start (resume) a stopped endpoint so it can serve inference again.
-    PROVISIONING ACTION: resumes paid GPU capacity. Returns the server's
-    acknowledgement."""
-    return {"result": _client().endpoints.start(endpoint_id)}
-
-
-@mcp.tool()
-@_guard
-def stop_endpoint(endpoint_id: str) -> dict[str, Any]:
-    """Stop a running endpoint to halt its GPU billing. It stays deployed and can
-    be resumed with `start_endpoint`; calls to a stopped endpoint return 503
-    until it is restarted. Returns the server's acknowledgement."""
-    return {"result": _client().endpoints.stop(endpoint_id)}
-
-
-@mcp.tool()
-@_guard
-def delete_endpoint(endpoint_id: str) -> dict[str, Any]:
-    """Permanently delete an endpoint. DESTRUCTIVE and irreversible — the
-    endpoint and its id are gone; redeploying mints a new one. Stop instead if
-    you only want to pause billing."""
-    _client().endpoints.delete(endpoint_id)
-    return {"deleted": endpoint_id}
-
-
-@mcp.tool()
-@_guard
-def endpoint_metrics(endpoint_id: str) -> dict[str, Any]:
-    """Read an endpoint's recent performance metrics (latency / throughput).
-    Returns the raw metric JSON the backend reports for the 'performance'
-    dimension."""
-    return {"endpoint_id": endpoint_id, "performance": _client().endpoints.metrics(endpoint_id).performance()}
-
-
-@mcp.tool()
-@_guard
-def endpoint_cost(endpoint_id: str) -> dict[str, Any]:
-    """Read an endpoint's cost metrics (spend over the reporting window).
-    Returns the raw 'cost' metric JSON the backend reports."""
-    return {"endpoint_id": endpoint_id, "cost": _client().endpoints.metrics(endpoint_id).cost()}
 
 
 # ── eval ───────────────────────────────────────────────────────────────────
@@ -231,8 +143,8 @@ def run_eval(
     name: str | None = None,
     wait: bool = True,
 ) -> dict[str, Any]:
-    """Run a bring-your-own-data eval comparing `models` (open candidate model /
-    endpoint ids) on a task, optionally against `frontier` vendor model ids.
+    """Run a bring-your-own-data eval comparing `models` (candidate model ids —
+    include "auto") on a task, optionally against `frontier` vendor model ids.
 
     Provide EITHER `eval_set` (an existing eval-set id) OR both `task` and
     `items` (a list of row dicts) to create one inline. METERED: the run debits
@@ -275,9 +187,9 @@ def chat(prompt: str, model: str = "auto") -> dict[str, Any]:
     The DEFAULT `model="auto"` is Pareta's routing brain — it plans the
     request, routes each part to the cheapest model that holds frontier-grade
     quality, verifies, and answers. This is the recommended way to call
-    Pareta. Pass a specific endpoint id (from `deploy_endpoint` /
-    `list_models`) only when you deliberately want one model. METERED: a
-    successful completion debits the org balance (a failed one bills $0).
+    Pareta. Pass a specific model id (from `list_models`) only when you
+    deliberately want one model. METERED: a successful completion debits the
+    org balance (a failed one bills $0).
     Returns `{"text": …, "model": …, "usage": …}`.
     """
     completion = _client().chat.completions.create(

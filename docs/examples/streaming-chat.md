@@ -9,9 +9,8 @@ loops, long generations, and anywhere a first-token-fast experience matters.
 Inference on Pareta is OpenAI-compatible, so the streaming shape here is the
 same vLLM-style data-only SSE the `openai` SDK consumes. Use `model="auto"` —
 the routing brain streams progress while it plans and executes, then the
-answer tokens. (A dedicated endpoint id from
-[deploying an endpoint](../guide/deploying-endpoints.md) streams the same way.)
-Streamed inference is metered against your org balance exactly like a
+answer tokens. There is nothing to deploy first: `"auto"` is live for every
+org. Streamed inference is metered against your org balance exactly like a
 non-streaming call.
 
 ## Quickstart
@@ -24,7 +23,7 @@ from pareta import Pareta
 pa = Pareta.from_env()  # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 stream = pa.chat.completions.create(
-    model="auto",             # the routing brain (or a dedicated endpoint id)
+    model="auto",             # the routing brain — the only model id
     messages=[{"role": "user", "content": "Write a haiku about throughput."}],
     stream=True,
 )
@@ -44,7 +43,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv(); // reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 const stream = pa.chat.completions.create({
-  model: "auto",            // the routing brain (or a dedicated endpoint id)
+  model: "auto",            // the routing brain — the only model id
   messages: [{ role: "user", content: "Write a haiku about throughput." }],
   stream: true,
 });
@@ -178,9 +177,9 @@ the same call with `stream=False` and read `completion.usage`.
 
 Any OpenAI chat parameter you pass as a keyword argument is forwarded verbatim
 in the request body: `temperature`, `max_tokens`, `top_p`, `stop`,
-`frequency_penalty`, and so on. There is no hardware knob — GPUs, quantization,
-and tensor-parallelism are resolved by Pareta when you deploy the endpoint, so
-the only model selector here is the endpoint id you pass to `model`.
+`frequency_penalty`, and so on. There is no model knob and no hardware knob —
+model choice, GPUs, and quantization are resolved by Pareta per request, so
+the only id you pass to `model` is `"auto"`.
 
 **Python**
 
@@ -293,7 +292,7 @@ try:
 except InsufficientCreditsError:
     print("Out of credit — top up in the dashboard.")
 except EndpointNotReadyError:
-    print("Endpoint is cold or stopped — start it and retry.")
+    print("A backend behind auto is briefly unavailable — retry in a moment.")
 ```
 
 **TypeScript**
@@ -320,7 +319,7 @@ try {
   if (e instanceof InsufficientCreditsError) {
     console.log("Out of credit — top up in the dashboard.");
   } else if (e instanceof EndpointNotReadyError) {
-    console.log("Endpoint is cold or stopped — start it and retry.");
+    console.log("A backend behind auto is briefly unavailable — retry in a moment.");
   } else {
     throw e;
   }
@@ -333,8 +332,9 @@ A few things to know about how the stream behaves under failure:
   empty `messages` raises `ValueError` immediately, before any network call.
 - **Errors surface before the first byte.** Non-2xx responses (402, 401, 404,
   503, and so on) are raised as the matching `ParetaError` subclass when the
-  stream starts, not mid-loop. A stopped or cold endpoint raises
-  `EndpointNotReadyError` (503).
+  stream starts, not mid-loop. A 503 — a serving backend behind auto warming
+  up or briefly unavailable — surfaces as `EndpointNotReadyError` only after
+  the SDK's automatic retries are exhausted.
 - **Mid-stream drops are not retried.** Retries cover only the initial
   connect/handshake. Once SSE bytes are flowing, a dropped connection raises
   (`APIConnectionError` / `APITimeoutError`) rather than silently resuming,
@@ -345,11 +345,9 @@ See [error handling](../guide/errors-and-retries.md) for the full exception hier
 
 ## Related
 
-- [Deploying an endpoint](../guide/deploying-endpoints.md) — get the `model` id you
-  pass here.
-- [Listing models](../guide/inference.md) — `models.list()` returns your deployed,
-  callable endpoints.
+- [Inference](../guide/inference.md) — the full chat surface; `models.list()`
+  returns exactly one entry, `"auto"`.
 - [Non-streaming completions](../guide/inference.md) — `stream=False` returns a
   single `ChatCompletion` with `usage` populated.
-- [Running evals](../guide/evaluation.md) — compare models on your own data, also metered
-  against the org balance.
+- [Running evals](../guide/evaluation.md) — benchmark `"auto"` against frontier
+  baselines on your own data, also metered against the org balance.

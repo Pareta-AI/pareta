@@ -1,20 +1,18 @@
 # Document extraction (PDF/image)
 
-Pull structured fields out of PDFs and scanned images, then serve the model that does it best for the least money.
+Pull structured fields out of PDFs and scanned images with `model="auto"` — and prove, on your own documents, that the routing holds frontier quality at a fraction of the cost.
 
-> **Zero-setup path:** `model="auto"` already routes document requests to Pareta's benchmark-proven extraction specialists — nothing to deploy, and it runs as a first-class contender in the eval below (`models=["auto"]`). This page is the *full* loop for when you want to pick and pin a specific open model yourself.
-
-This page walks the full loop for a document task end to end:
+`model="auto"` already routes document requests to Pareta's benchmark-proven extraction specialists — nothing to deploy, no model to pick. This page walks the loop that keeps you honest about it:
 
 1. Find the blob task and check what it expects.
 2. Build an eval set from your own documents (one JSONL row per document, with the PDF/image attached to each row).
-3. Run the eval against a few open-weights candidates plus frontier (vision) baselines.
-4. Read the per-model quality and cost results, pick the winner.
-5. Deploy that model and call it with OpenAI-compatible inference.
+3. Benchmark `"auto"` against frontier (vision) baselines on those documents.
+4. Read the quality and cost verdict.
+5. Send production documents to `model="auto"` with OpenAI-compatible inference.
 
-Why do it this way: a document task is a *blob* task. The model reads pixels, not just text, so picking by gut is a bad idea. Running an eval on your real documents tells you, in dollars and quality points, which open model matches the frontier closely enough to be worth running yourself. Both evals and inference are metered against your org balance, so the eval also tells you the bill before you commit.
+Why do it this way: a document task is a *blob* task. The model reads pixels, not just text, so trusting any router — Pareta's included — on gut is a bad idea. Running an eval on your real documents tells you, in dollars and quality points, how `"auto"` compares to the frontier on exactly your paper. Both evals and inference are metered against your org balance, so the eval also tells you the bill before you commit.
 
-Throughout, `model` ids are per-task public aliases. You never see or pass real open-weights ids, and you never pass hardware. Pareta hides the GPU; `deploy` takes a task and a model, nothing else.
+Throughout, there is no model to name and no hardware to size: the only inference id is `"auto"`, and frontier (vendor) ids appear only as eval baselines.
 
 ## Setup
 
@@ -74,35 +72,9 @@ for (const c of m.candidates) {
 }
 ```
 
-`task.default_scorer` is the scorer the eval run applies (for a field-extraction task that is typically a field-level F1). You do not invoke it yourself; the run scores each model against the expected output you provide in step 2.
+`task.default_scorer` is the scorer the eval run applies (for a field-extraction task that is typically a field-level F1). You do not invoke it yourself; the run scores each contender against the expected output you provide in step 2.
 
-To see which open models are even in the running for this task, and what the frontier baseline is, read the leaderboard. `recommended` is the deployable alias `deploy(model="recommended")` resolves to.
-
-**Python**
-
-```python
-lb = pa.tasks.leaderboard("invoice-extraction")
-print("recommended:", lb.recommended)
-for e in lb.models:                      # ranked, best first
-    print(f"  {e.name:18}  q={e.quality:.3f}  {e.cost_per_request_micro_usd} uUSD/req  {e.kind}")
-if lb.frontier:
-    print("frontier baseline:", lb.frontier.name, lb.frontier.quality)
-```
-
-**TypeScript**
-
-```typescript
-const lb = await pa.tasks.leaderboard("invoice-extraction");
-console.log("recommended:", lb.recommended);
-for (const e of lb.models) {             // ranked, best first
-  console.log(`  ${e.name.padEnd(18)}  q=${e.quality.toFixed(3)}  ${e.costPerRequestMicroUsd} uUSD/req  ${e.kind}`);
-}
-if (lb.frontier) {
-  console.log("frontier baseline:", lb.frontier.name, lb.frontier.quality);
-}
-```
-
-See [Discovering tasks](../guide/discovery.md) for the full catalog and matching reference.
+See the [tasks reference](../reference/tasks.md) for the full catalog and matching surface.
 
 ## 2. Build an eval set from your documents
 
@@ -243,14 +215,14 @@ await pa.evals.sets.uploadDocument(
 
 ## 3. Run the eval
 
-Pass the open-weights candidates you want to compare in `models` (aliases from the leaderboard), and choose frontier baselines with `frontier=`. For a document task you want vision-capable baselines; `frontier="benchmarked"` resolves to the frontier models already on this task's leaderboard (vision-filtered for document tasks), so you compare against the right roster automatically.
+The contender is `"auto"` — the same routing that will serve your production documents — and `frontier=` chooses the baselines it is measured against. For a document task you want vision-capable baselines; `frontier="benchmarked"` resolves to the frontier models Pareta has already benchmarked on this task (vision-filtered for document tasks), so you compare against the right roster automatically.
 
 **Python**
 
 ```python
 run = pa.evals.runs.create(
     eval_set=eval_set.id,
-    models=["qwen2.5-vl-1", "internvl-1"],   # open candidates (per-task aliases)
+    models=["auto"],                         # the contender: Pareta's routing brain
     frontier="benchmarked",                  # vision frontier baselines on this task
     wait=True,                               # block until the run is terminal
 )
@@ -262,7 +234,7 @@ print(run.status, run.id)                    # 'completed'  run_…
 ```typescript
 const run = await pa.evals.runs.create({
   evalSet: evalSet.id,
-  models: ["qwen2.5-vl-1", "internvl-1"],   // open candidates (per-task aliases)
+  models: ["auto"],                         // the contender: Pareta's routing brain
   frontier: "benchmarked",                  // vision frontier baselines on this task
   wait: true,                               // block until the run is terminal
 });
@@ -274,7 +246,7 @@ console.log(run.status, run.id);            // 'completed'  run_…
 **Python**
 
 ```python
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["qwen2.5-vl-1"], frontier="benchmarked")
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="benchmarked")
 # ... do other work ...
 run = pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=1200.0)
 ```
@@ -282,7 +254,7 @@ run = pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=1200.0)
 **TypeScript**
 
 ```typescript
-let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["qwen2.5-vl-1"], frontier: "benchmarked" });
+let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: "benchmarked" });
 // ... do other work ...
 run = await pa.evals.runs.wait(run.id, { pollInterval: 5, timeout: 1200 });
 ```
@@ -295,8 +267,8 @@ If you would rather not pre-create the set, `runs.create` accepts `task=… + it
 |---|---|
 | `None` or `"none"` | no baselines |
 | `"all"` | every frontier model for the task (from `pa.evals.frontier_models(task=…)`) |
-| `"benchmarked"` | frontier models on the task's leaderboard (vision-filtered for document tasks) |
-| `["gpt-4o", "claude-…"]` | exactly those frontier ids |
+| `"benchmarked"` | frontier models Pareta has already benchmarked on this task (vision-filtered for document tasks) |
+| `["gpt-5.5", "claude-sonnet-4-6"]` | exactly those frontier ids |
 
 Frontier (vendor) ids are in the clear, so you can name them explicitly. To see the roster first:
 
@@ -317,7 +289,7 @@ for (const fm of await pa.evals.frontierModels("invoice-extraction")) {
 
 ### Metering
 
-The run debits your org balance for the compute it consumes, open candidates and frontier baselines alike. If the balance is empty, `runs.create` raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK never exposes balance or payment methods.
+The run debits your org balance for the compute it consumes, auto and frontier baselines alike. If the balance is empty, `runs.create` raises `InsufficientCreditsError` (402). Top-up is browser-only; the SDK never exposes balance or payment methods.
 
 **Python**
 
@@ -325,7 +297,7 @@ The run debits your org balance for the compute it consumes, open candidates and
 from pareta import InsufficientCreditsError
 
 try:
-    run = pa.evals.runs.create(eval_set=eval_set.id, models=["qwen2.5-vl-1"], frontier="benchmarked", wait=True)
+    run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     print("Org out of credit — top up in the dashboard, then re-run.")
 ```
@@ -336,7 +308,7 @@ except InsufficientCreditsError:
 import { InsufficientCreditsError } from "pareta";
 
 try {
-  const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["qwen2.5-vl-1"], frontier: "benchmarked", wait: true });
+  const run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: "benchmarked", wait: true });
 } catch (e) {
   if (e instanceof InsufficientCreditsError) {
     console.log("Org out of credit — top up in the dashboard, then re-run.");
@@ -346,9 +318,9 @@ try {
 }
 ```
 
-## 4. Read the results and pick a winner
+## 4. Read the verdict
 
-`run.results` is one `EvalResult` per evaluated model: the open candidates and the frontier baselines, each with mean quality, a 95% confidence interval, and the average cost per item. `run.cost` is the billed total for the whole run.
+`run.results` is one `EvalResult` per contender: `"auto"` plus each frontier baseline, each with mean quality, a 95% confidence interval, and the average cost per item. The baseline rows carry `kind == "frontier"`; auto's row is the one with `model_id == "auto"`. `run.cost` is the billed total for the whole run.
 
 **Python**
 
@@ -360,7 +332,7 @@ print(f"run cost: ${run.cost}")              # Decimal dollars, floored to cents
 
 for r in sorted(run.results, key=lambda r: (r.quality_mean or 0), reverse=True):
     print(
-        f"{r.model_id:18} {r.kind:8} "
+        f"{r.model_id:18} {(r.kind or ''):8} "
         f"q={r.quality_mean:.3f} "
         f"[{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]  "
         f"{r.mean_cost_micro_usd} uUSD/item  "
@@ -380,7 +352,7 @@ console.log(`run cost: $${run.cost}`);       // dollar string, floored to cents
 const sorted = [...run.results].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0));
 for (const r of sorted) {
   console.log(
-    `${r.modelId.padEnd(18)} ${r.kind.padEnd(8)} ` +
+    `${r.modelId.padEnd(18)} ${(r.kind ?? "").padEnd(8)} ` +
     `q=${r.qualityMean.toFixed(3)} ` +
     `[${r.qualityCiLow.toFixed(3)}, ${r.qualityCiHigh.toFixed(3)}]  ` +
     `${r.meanCostMicroUsd} uUSD/item  ` +
@@ -390,38 +362,16 @@ for (const r of sorted) {
 ```
 
 ```
-gpt-4o-vision      frontier q=0.946 [0.921, 0.968]  41200 uUSD/item  ok=10 err=0
-qwen2.5-vl-1       open     q=0.921 [0.889, 0.948]   3100 uUSD/item  ok=10 err=0
-internvl-1         open     q=0.870 [0.831, 0.905]   2750 uUSD/item  ok=10 err=0
+gpt-5.5            frontier q=0.946 [0.921, 0.968]  41200 uUSD/item  ok=10 err=0
+auto                        q=0.938 [0.912, 0.961]   3400 uUSD/item  ok=10 err=0
+gemini-3-1-pro     frontier q=0.925 [0.897, 0.950]  28900 uUSD/item  ok=10 err=0
 ```
 
-Reading it: `qwen2.5-vl-1` lands within a couple of quality points of the frontier baseline at roughly a tenth of the per-item cost, and its CI overlaps the frontier's lower bound. That is the open model worth serving. Pick the winning alias:
-
-**Python**
-
-```python
-ranked = sorted(
-    (r for r in run.results if r.kind == "open"),
-    key=lambda r: (r.quality_mean or 0),
-    reverse=True,
-)
-winner = ranked[0].model_id
-print("winner:", winner)   # 'qwen2.5-vl-1'
-```
-
-**TypeScript**
-
-```typescript
-const ranked = run.results
-  .filter((r) => r.kind === "open")
-  .sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0));
-const winner = ranked[0].modelId;
-console.log("winner:", winner);   // 'qwen2.5-vl-1'
-```
+Reading it: auto lands within a point of the strongest frontier baseline — the CIs overlap, so the two are not meaningfully different on this sample — at roughly a twelfth of the per-item cost. That is the verdict the eval exists to deliver, and there is nothing to pick or provision off the back of it: the routing that produced auto's row is the routing that serves production.
 
 ### A note on money
 
-`run.cost` is a `Decimal` in dollars, floored to whole cents (the SDK never rounds a charge up). The raw integer is on `run.cost_micro_usd` (1,000,000 = $1.00) if you need sub-cent precision. Per-item rates like `result.mean_cost_micro_usd` stay in micro-USD on purpose; flooring them to cents would erase the open-vs-frontier comparison that just earned its keep above.
+`run.cost` is a `Decimal` in dollars, floored to whole cents (the SDK never rounds a charge up). The raw integer is on `run.cost_micro_usd` (1,000,000 = $1.00) if you need sub-cent precision. Per-item rates like `result.mean_cost_micro_usd` stay in micro-USD on purpose; flooring them to cents would erase the auto-vs-frontier comparison that just earned its keep above.
 
 **Python**
 
@@ -437,70 +387,9 @@ console.log(run.cost);          // "0.07"  (floored-to-cents dollar string)
 console.log(run.costMicroUsd);  // 72500
 ```
 
-## 5. Deploy the winner
+## 5. Send documents to `model="auto"` in production
 
-`deploy` takes the task and the model alias. No GPU, no quantization, no tensor-parallel knob; Pareta resolves the serving class. With `wait=True` it blocks through provisioning and returns the live `Endpoint`.
-
-**Python**
-
-```python
-ep = pa.endpoints.deploy(
-    task="invoice-extraction",
-    model=winner,            # the alias your eval chose
-    wait=True,
-)
-print(ep.id, ep.status, ep.is_live, ep.url)
-# ep_…  live  True  https://…
-```
-
-**TypeScript**
-
-```typescript
-const ep = await pa.endpoints.deploy({
-  task: "invoice-extraction",
-  model: winner,            // the alias your eval chose
-  wait: true,
-});
-console.log(ep.id, ep.status, ep.isLive, ep.url);
-// ep_…  live  true  https://…
-```
-
-Prefer to watch progress instead of blocking? Leave `wait=False` (the default) and iterate the deploy event stream:
-
-**Python**
-
-```python
-for ev in pa.endpoints.deploy(task="invoice-extraction", model=winner):
-    if ev["event"] == "progress":
-        print("...", ev["data"].get("stage"))
-    elif ev["event"] == "complete":
-        ep = ev["data"]["endpoint"]
-    elif ev["event"] == "error":
-        raise RuntimeError(ev["data"].get("message"))
-```
-
-**TypeScript**
-
-```typescript
-let ep;
-for await (const ev of pa.endpoints.deploy({ task: "invoice-extraction", model: winner })) {
-  if (ev.event === "progress") {
-    console.log("...", ev.data.stage);
-  } else if (ev.event === "complete") {
-    ep = ev.data.endpoint;
-  } else if (ev.event === "error") {
-    throw new Error(ev.data?.message ?? "deploy failed");
-  }
-}
-```
-
-You can also let Pareta pick: `deploy(task="invoice-extraction", model="recommended")` resolves to `pa.tasks.recommended("invoice-extraction")`. The eval above is how you decide whether the recommended pick is actually the right call for *your* documents.
-
-See [Deploying and operating endpoints](../guide/deploying-endpoints.md) for `list`, `start`, `stop`, `delete`, and the `metrics(...)` dimensions.
-
-## 6. Run inference against the endpoint
-
-The endpoint is OpenAI-compatible. Pass `ep.id` as `model`. For a vision document task, send the image in the standard OpenAI content-parts shape; PDFs are typically handed in as page images or a data URL, matching whatever the task expects.
+The routing your eval just measured is already live — it is the standard chat surface with `model="auto"`, OpenAI-compatible on the wire. For a vision document task, send the image in the standard OpenAI content-parts shape; PDFs are typically handed in as page images or a data URL, matching whatever the task expects.
 
 **Python**
 
@@ -510,7 +399,7 @@ import base64
 img_b64 = base64.b64encode(open("invoices/new-INV.png", "rb").read()).decode()
 
 resp = pa.chat.completions.create(
-    model=ep.id,
+    model="auto",
     messages=[
         {
             "role": "user",
@@ -535,7 +424,7 @@ import { readFile } from "node:fs/promises";
 const imgB64 = (await readFile("invoices/new-INV.png")).toString("base64");
 
 const resp = await pa.chat.completions.create({
-  model: ep.id,
+  model: "auto",
   messages: [
     {
       role: "user",
@@ -552,26 +441,26 @@ console.log(resp.choices[0].message.content);
 console.log(resp.usage.totalTokens);
 ```
 
-Inference is metered the same way the eval was: a successful completion debits the org balance, and a zero balance raises `InsufficientCreditsError` (402). To stream tokens as they generate:
+Inference is metered the same way the eval was: a successful completion debits the org balance — one debit per request, no matter how many internal model calls auto's plan makes — and a zero balance raises `InsufficientCreditsError` (402). To stream tokens as they generate:
 
 **Python**
 
 ```python
-for chunk in pa.chat.completions.create(model=ep.id, messages=[...], stream=True):
+for chunk in pa.chat.completions.create(model="auto", messages=[...], stream=True):
     print(chunk.choices[0].delta.content or "", end="", flush=True)
 ```
 
 **TypeScript**
 
 ```typescript
-for await (const chunk of pa.chat.completions.create({ model: ep.id, messages: [...], stream: true })) {
+for await (const chunk of pa.chat.completions.create({ model: "auto", messages: [...], stream: true })) {
   process.stdout.write(chunk.choices[0].delta.content ?? "");
 }
 ```
 
 ## Async
 
-Every step mirrors on `AsyncPareta`. `deploy` and `runs.wait` are awaitable; deploy event streams and chat streams are `async for`.
+Every step mirrors on `AsyncPareta`. `runs.wait` is awaitable; chat streams are `async for`.
 
 **Python**
 
@@ -584,17 +473,13 @@ async def main():
         await pa.evals.sets.upload_document(es.id, "invoices/INV-4471.pdf", idx=0, field_name="document")
 
         run = await pa.evals.runs.create(
-            eval_set=es.id, models=["qwen2.5-vl-1"], frontier="benchmarked", wait=True,
+            eval_set=es.id, models=["auto"], frontier="benchmarked", wait=True,
         )
-        winner = max(
-            (r for r in run.results if r.kind == "open"),
-            key=lambda r: (r.quality_mean or 0),
-        ).model_id
-
-        ep = await pa.endpoints.deploy(task="invoice-extraction", model=winner, wait=True)
+        for r in run.results:
+            print(r.model_id, r.quality_mean, r.mean_cost_micro_usd)
 
         resp = await pa.chat.completions.create(
-            model=ep.id,
+            model="auto",
             messages=[{"role": "user", "content": "Extract the total as JSON."}],
         )
         print(resp.choices[0].message.content)
@@ -615,16 +500,14 @@ async function main() {
   await pa.evals.sets.uploadDocument(es.id, "invoices/INV-4471.pdf", { idx: 0, fieldName: "document" });
 
   const run = await pa.evals.runs.create({
-    evalSet: es.id, models: ["qwen2.5-vl-1"], frontier: "benchmarked", wait: true,
+    evalSet: es.id, models: ["auto"], frontier: "benchmarked", wait: true,
   });
-  const winner = run.results
-    .filter((r) => r.kind === "open")
-    .sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))[0].modelId;
-
-  const ep = await pa.endpoints.deploy({ task: "invoice-extraction", model: winner, wait: true });
+  for (const r of run.results) {
+    console.log(r.modelId, r.qualityMean, r.meanCostMicroUsd);
+  }
 
   const resp = await pa.chat.completions.create({
-    model: ep.id,
+    model: "auto",
     messages: [{ role: "user", content: "Extract the total as JSON." }],
   });
   console.log(resp.choices[0].message.content);
@@ -646,25 +529,20 @@ es = pa.evals.sets.create(task=TASK, items=items, name="vendor invoices")
 for idx, path in enumerate(invoices):
     pa.evals.sets.upload_document(es.id, path, idx=idx, field_name="document")
 
-# 2. compare open candidates against vision frontier baselines
+# 2. benchmark auto against vision frontier baselines
 run = pa.evals.runs.create(
     eval_set=es.id,
-    models=["qwen2.5-vl-1", "internvl-1"],
+    models=["auto"],
     frontier="benchmarked",
     wait=True,
 )
 print(f"eval cost ${run.cost}")
+for r in run.results:
+    print(r.model_id, r.quality_mean, r.mean_cost_micro_usd)
 
-# 3. pick the best open model
-winner = max(
-    (r for r in run.results if r.kind == "open"),
-    key=lambda r: (r.quality_mean or 0),
-).model_id
-
-# 4. deploy it and extract
-ep = pa.endpoints.deploy(task=TASK, model=winner, wait=True)
+# 3. production is the same id the eval just measured
 resp = pa.chat.completions.create(
-    model=ep.id,
+    model="auto",
     messages=[{"role": "user", "content": "Extract the invoice fields as JSON."}],
 )
 print(resp.choices[0].message.content)
@@ -684,24 +562,21 @@ for (let idx = 0; idx < invoices.length; idx++) {
   await pa.evals.sets.uploadDocument(es.id, invoices[idx], { idx, fieldName: "document" });
 }
 
-// 2. compare open candidates against vision frontier baselines
+// 2. benchmark auto against vision frontier baselines
 const run = await pa.evals.runs.create({
   evalSet: es.id,
-  models: ["qwen2.5-vl-1", "internvl-1"],
+  models: ["auto"],
   frontier: "benchmarked",
   wait: true,
 });
 console.log(`eval cost $${run.cost}`);
+for (const r of run.results) {
+  console.log(r.modelId, r.qualityMean, r.meanCostMicroUsd);
+}
 
-// 3. pick the best open model
-const winner = run.results
-  .filter((r) => r.kind === "open")
-  .sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))[0].modelId;
-
-// 4. deploy it and extract
-const ep = await pa.endpoints.deploy({ task: TASK, model: winner, wait: true });
+// 3. production is the same id the eval just measured
 const resp = await pa.chat.completions.create({
-  model: ep.id,
+  model: "auto",
   messages: [{ role: "user", content: "Extract the invoice fields as JSON." }],
 });
 console.log(resp.choices[0].message.content);
@@ -709,7 +584,7 @@ console.log(resp.choices[0].message.content);
 
 ## See also
 
-- [Inference (OpenAI-compatible)](../guide/inference.md) — calling endpoints, streaming, using the `openai` client.
-- [Discovering tasks](../guide/discovery.md) — the catalog, `match`, leaderboards, and the `recommended` alias.
+- [Inference (OpenAI-compatible)](../guide/inference.md) — `model="auto"`, streaming, using the `openai` client.
+- [The tasks reference](../reference/tasks.md) — the catalog, `match`, and task schemas.
 - [Evaluating models on your data](../guide/evaluation.md) — eval sets, runs, frontier baselines, and metering in depth.
-- [Deploying and operating endpoints](../guide/deploying-endpoints.md) — deploy events, lifecycle, and per-endpoint metrics.
+- [Cost & quality monitoring](./cost-and-metrics.md) — read run costs and watch live auto traffic with `auto.metrics()`.

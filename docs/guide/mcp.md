@@ -1,6 +1,6 @@
 # MCP server
 
-`pareta-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes Pareta's control plane to an AI agent (Claude Desktop, Cursor, …) as tools — so the agent can match a task, read a leaderboard, deploy and operate endpoints, run an eval, and call a model on your behalf. It ships with the Python package (`pip install "pareta[mcp]"`) and speaks stdio, so any MCP-capable client can drive it regardless of your project's language.
+`pareta-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes Pareta to an AI agent (Claude Desktop, Cursor, …) as tools — so the agent can call `model="auto"`, match a task, run an eval on your data, and read auto's metrics on your behalf. It ships with the Python package (`pip install "pareta[mcp]"`) and speaks stdio, so any MCP-capable client can drive it regardless of your project's language.
 
 ## Install it in its own environment
 
@@ -102,23 +102,22 @@ PARETA_API_KEY=pareta_sk_… uvx --from "pareta[mcp]" pareta-mcp
 
 ## The tools
 
-The server exposes the full control plane, grouped the same way as the SDK and CLI:
+The tools are grouped the same way as the SDK and CLI:
 
-- **Discovery** — `match_task`, `list_tasks`, `get_task`, `get_leaderboard`, `recommended_model`, `list_models`. Start with `match_task` to turn a plain-language goal into a task.
-- **Provisioning** — `deploy_endpoint`, `list_endpoints`, `get_endpoint`, `start_endpoint`, `stop_endpoint`, `delete_endpoint`, `endpoint_metrics`, `endpoint_cost`.
-- **Eval** — `run_eval`, `get_eval_run` (bring-your-own-data, metered).
-- **Inference** — `chat` (metered).
+- **Inference** — `chat` (metered). The default `model="auto"` is the product: Pareta plans the request, routes it to benchmark-proven open specialists, verifies, and falls back to a frontier model when that's the right call.
+- **Discovery** — `match_task`, `list_tasks`, `get_task`, `list_models`. Start with `match_task` to turn a plain-language goal into a task; `list_models` returns exactly one entry, `auto`.
+- **Eval** — `run_eval`, `get_eval_run` (bring-your-own-data, metered). Pass `"auto"` among the candidate models to benchmark Pareta's routing itself against frontier baselines on your data.
+- **Auto** — `auto_metrics` (read-only, free) and `compare_frontier` (metered: one prompt against a frontier vendor for a side-by-side with `chat`).
 - **Audio** — `transcribe`, `speak` (metered per minute).
 
-A typical agent flow: `match_task("pull the key fields out of contracts")` → `get_leaderboard(task)` → `deploy_endpoint(task)` → `chat(endpoint_id, …)`.
+A typical agent flow: `match_task("pull the key fields out of contracts")` → `run_eval(models=["auto"], task, items)` → `chat(prompt)`.
 
 ## Spending money is gated by your client's approval
 
-Some tools cost money or change infrastructure: `deploy_endpoint` / `start_endpoint` spin up paid GPU capacity; `chat` / `run_eval` / `transcribe` / `speak` debit your org balance; and `delete_endpoint` is irreversible. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which model, which endpoint) before approving a provisioning or inference call. Tool errors — a missing key, an out-of-credit balance, a failed deploy — come back as a clean `{"error": …}` message the agent can read, not a crash.
+Some tools cost money: `chat` / `run_eval` / `compare_frontier` / `transcribe` / `speak` debit your org balance. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which rows, which prompt) before approving a metered call. Tool errors — a missing key, an out-of-credit balance — come back as a clean `{"error": …}` message the agent can read, not a crash.
 
 ## Next steps
 
 - [The `/pareta` skill](skill.md) — the slash-command alternative: a `SKILL.md` that drives the CLI (Claude Code & Codex), instead of tools-over-a-server.
-- [The `pareta` CLI](cli.md) — the same control plane as a shell command.
-- [Core concepts](core-concepts.md) — tasks, per-task aliases, hidden hardware, and the metering the agent is driving.
-- [Finding the right model](discovery.md) — the discovery loop behind `match_task` / `get_leaderboard`.
+- [The `pareta` CLI](cli.md) — the same commands from your shell.
+- [Core concepts](core-concepts.md) — tasks, `model="auto"`, and the metering the agent is driving.

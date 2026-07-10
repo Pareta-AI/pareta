@@ -1,8 +1,9 @@
 # `/pareta` agent skill
 
 A single [`SKILL.md`](./SKILL.md) that teaches an AI coding agent to drive the
-`pareta` CLI — match a task to an open-weights model, deploy it (Pareta picks the
-GPU), run metered inference, and benchmark models on your own data.
+`pareta` CLI — call `model:"auto"` (Pareta routes every request to the best
+model), benchmark it against frontier models on your own data, and monitor
+spend/quality/savings.
 
 Claude Code and Codex use the **same** skill format (YAML frontmatter `name` +
 `description` + a Markdown body), so the one file works in both. The agent loads

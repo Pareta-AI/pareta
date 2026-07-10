@@ -2,15 +2,13 @@
 
 Every method that talks to the API hands you back a typed object, not a bare
 dict. These objects give you attribute access and autocomplete over the shapes
-the API returns: a chat completion's `choices`, an endpoint's `status`, an eval
+the API returns: a chat completion's `choices`, a task match's `type`, an eval
 run's `cost`. They are thin: each one wraps the raw server JSON and exposes the
 fields you actually use as properties.
 
 This page is the field-by-field reference for those objects. For how the methods
 that return them work, see [Running inference](../guide/inference.md),
-[Deploying endpoints](../guide/deploying-endpoints.md),
-[Finding the right model](../guide/discovery.md), and
-[Evaluating models](../guide/evaluation.md).
+[tasks](./tasks.md), and [Evaluating models](../guide/evaluation.md).
 
 ## The shared base: every object keeps the raw JSON
 
@@ -29,7 +27,7 @@ from pareta import Pareta
 pa = Pareta.from_env()   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
 
 resp = pa.chat.completions.create(
-    model="ep_contract_qwen",
+    model="auto",
     messages=[{"role": "user", "content": "ping"}],
 )
 
@@ -53,14 +51,14 @@ The non-streaming result of `chat.completions.create(...)`.
 | Property | Type | Notes |
 |---|---|---|
 | `id` | `str \| None` | Completion id |
-| `model` | `str \| None` | The model/endpoint id that served the request |
+| `model` | `str \| None` | The model id on the completion |
 | `created` | `int \| None` | Unix timestamp |
 | `choices` | `list[Choice]` | One entry per generated choice |
 | `usage` | `Usage` | Token counts |
 
 ```python
 resp = pa.chat.completions.create(
-    model="ep_contract_qwen",
+    model="auto",
     messages=[{"role": "user", "content": "Extract the effective date."}],
     temperature=0,
 )
@@ -77,7 +75,7 @@ purely for hinting. The incremental text lives on `choices[0].delta.content`, no
 
 ```python
 for chunk in pa.chat.completions.create(
-    model="ep_contract_qwen",
+    model="auto",
     messages=[{"role": "user", "content": "Summarize this contract."}],
     stream=True,
 ):
@@ -124,9 +122,9 @@ Token accounting on a `ChatCompletion`.
 ## Model listing types
 
 Returned from `models.list()` (route `GET /v1/models`). This is the
-OpenAI-compatible model listing: it returns only your deployed endpoints that
-have a live inference URL, so you can point any OpenAI-style tooling at Pareta and
-get a sensible `/models` response.
+OpenAI-compatible model listing: it returns exactly one entry, `"auto"`, so
+any OpenAI-style tooling pointed at Pareta gets a sensible `/models` response
+with the one id you send.
 
 ### ModelList
 
@@ -149,45 +147,14 @@ One element of a `ModelList`.
 
 | Property | Type | Notes |
 |---|---|---|
-| `id` | `str \| None` | Endpoint id. Pass straight into `chat.completions.create(model=...)` |
-| `owned_by` | `str \| None` | `"pareta"` or a vendor name |
+| `id` | `str \| None` | `"auto"`. Pass straight into `chat.completions.create(model=...)` |
+| `owned_by` | `str \| None` | `"pareta"` |
 | `created` | `int \| None` | Unix timestamp |
-
-## Endpoint
-
-Returned from `endpoints.deploy(..., wait=True)`, `endpoints.list()`, and
-`endpoints.retrieve(id)`. A deployed open-weights model serving inference.
-
-| Property | Type | Notes |
-|---|---|---|
-| `id` | `str \| None` | The endpoint id (== `name`). This is what you pass to `chat.completions.create(model=...)` |
-| `name` | `str \| None` | Endpoint name |
-| `model` | `str \| None` | The **per-task public alias** of the served model, never the real id |
-| `status` | `str \| None` | `"live"`, `"starting"`, `"stopped"`, etc. |
-| `task` | `str \| None` | The task this endpoint serves |
-| `url` | `str \| None` | Inference URL (set once live) |
-| `is_live` | `bool` | Convenience: `status == "live"` |
-
-Two platform truths show up here. There is no GPU, quantization, or
-tensor-parallel field, because hardware is hidden: you deploy with a task and a
-model and Pareta resolves the serving class. And `model` is the per-task alias,
-not the underlying checkpoint id; the real id never crosses into the SDK.
-
-```python
-ep = pa.endpoints.deploy(task="contract-key-fields", model="recommended", wait=True)
-print(ep.id, ep.model, ep.status, ep.url)
-
-if ep.is_live:
-    pa.chat.completions.create(model=ep.id, messages=[{"role": "user", "content": "hi"}])
-```
-
-`endpoints.metrics(id)` returns a `Metrics` object (not a response type) whose
-`.performance()`, `.uptime()`, `.cost()`, `.quality()`, and `.activity()` methods
-return raw JSON dicts. Typed wrappers are planned but not yet shipped.
 
 ## Discovery types
 
-These come from the `tasks` namespace and power the match-and-rank funnel.
+These come from the `tasks` namespace and answer "can Pareta do X?" before you
+send traffic.
 
 ### Task
 
@@ -237,7 +204,7 @@ else:
 print("via", m.matcher)
 ```
 
-See [Capabilities](../guide/discovery.md#capabilities) for the general lanes.
+See [tasks.match](./tasks.md#tasksmatch) for the full matching semantics.
 
 ### Capability
 
@@ -262,72 +229,25 @@ An element of `match.candidates` (and the type of `match.chosen`).
 | `score` | `float \| None` | Match score in `[0, 1]` |
 | `confidence` | `str \| None` | `"high"`, `"medium"`, or `"low"` |
 
-### Leaderboard
-
-Returned from `tasks.leaderboard(task_id)`. Open models ranked for a task, with a
-single frontier baseline to beat.
-
-| Property | Type | Notes |
-|---|---|---|
-| `task_id` | `str \| None` | The task |
-| `metric` | `str \| None` | What the ranking optimizes, e.g. `"quality"` |
-| `cost_unit` | `str \| None` | Cost basis, e.g. `"per_request"` |
-| `recommended` | `str \| None` | The deployable model alias Pareta would pick. Pass straight to `endpoints.deploy(model=...)` |
-| `models` | `list[LeaderboardEntry]` | Ranked **open** candidates |
-| `frontier` | `LeaderboardEntry \| None` | The vendor baseline (savings reference) |
-
-`recommended` is exactly what `endpoints.deploy(model="recommended")` resolves to,
-and `tasks.recommended(task_id)` is a shortcut for `leaderboard(task_id).recommended`.
-
-```python
-lb = pa.tasks.leaderboard("contract-key-fields")
-print("recommended:", lb.recommended, "| metric:", lb.metric, "| unit:", lb.cost_unit)
-
-for e in lb.models:                         # ranked open aliases
-    print(e.name, e.kind, e.quality, e.cost_per_request_micro_usd, f"{e.context_k}k")
-
-if lb.frontier:
-    print("baseline:", lb.frontier.name, lb.frontier.quality)
-```
-
-`tasks.leaderboard()` and `tasks.recommended()` are sync-only today; the async
-`AsyncTasks` namespace does not expose them yet.
-
-### LeaderboardEntry
-
-A row of `leaderboard.models` (and the type of `leaderboard.frontier`).
-
-| Property | Type | Notes |
-|---|---|---|
-| `name` | `str \| None` | Model name. For open models this is the **per-task alias**; for the frontier row it is the vendor id |
-| `kind` | `str \| None` | `"open"` or `"frontier"` |
-| `quality` | `float \| None` | Quality score in `[0, 1]` |
-| `cost_per_request_micro_usd` | `int \| None` | Unit cost in **micro-USD** (not floored). See [money](#money-cost-vs-cost_micro_usd) |
-| `context_k` | `int \| None` | Context window, in thousands of tokens |
-| `run_mode` | `str \| None` | Backend benchmark context (`"rte"`, `"twostage"`); not a knob you set |
-
-`name` for an open entry is the alias you feed back into `deploy(model=...)` or an
-eval run's `models=[...]`. You never translate ids yourself.
-
 ### FrontierModel
 
 Returned from `evals.frontier_models(task=...)`. A vendor model you can evaluate
-against (the baseline, never something you deploy).
+against — the baseline `"auto"` is measured by.
 
 | Property | Type | Notes |
 |---|---|---|
 | `id` | `str \| None` | Vendor model id. Feed into `evals.runs.create(frontier=[...])` |
 | `vendor` | `str \| None` | `"openai"`, `"anthropic"`, etc. |
 | `vision` | `bool` | `True` if vision-capable |
-| `benchmarked` | `bool` | `True` if it is on the task's leaderboard. Only meaningful when you passed `task=` |
+| `benchmarked` | `bool` | `True` if it is benchmarked on the task. Only meaningful when you passed `task=` |
 
-Frontier ids are shown in the clear because they are public products. Open-model
-aliases are not.
+Frontier ids are shown in the clear because they are public products. The open
+specialists auto routes to are not — they never surface as ids.
 
 ```python
 for fm in pa.evals.frontier_models(task="contract-key-fields"):
     flag = "vision" if fm.vision else "text"
-    note = " (on leaderboard)" if fm.benchmarked else ""
+    note = " (benchmarked on this task)" if fm.benchmarked else ""
     print(fm.id, fm.vendor, flag, note)
 ```
 
@@ -371,7 +291,7 @@ pa.audio.speech("Hello from Pareta.").save("out.wav")
 ## Evaluation types
 
 These come from the `evals` namespace and carry the cost numbers you compare
-open against frontier with.
+`"auto"` against the frontier with.
 
 ### EvalSet
 
@@ -408,7 +328,7 @@ once it is terminal. The object wraps the server's `{"run": {...}, "results":
 | `eval_set_id` | `str \| None` | The set being evaluated |
 | `status` | `str \| None` | `"running"`, `"evaluating"`, `"completed"`, `"failed"` |
 | `is_terminal` | `bool` | `True` when `status` is `"completed"` or `"failed"` |
-| `candidate_models` | `list[str]` | The model ids (aliases) that were evaluated |
+| `candidate_models` | `list[str]` | The candidates evaluated: `"auto"` and any frontier ids |
 | `error_detail` | `str \| None` | Failure message when `status == "failed"` |
 | `cost_micro_usd` | `int` | Raw total cost in **micro-USD** |
 | `cost` | `Decimal` | Billed total in **dollars, floored to cents**. See [money](#money-cost-vs-cost_micro_usd) |
@@ -418,8 +338,8 @@ once it is terminal. The object wraps the server's `{"run": {...}, "results":
 run = pa.evals.runs.create(
     task="contract-key-fields",
     items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
-    models=["qwen-1", "mistral-2"],   # open candidates (per-task aliases)
-    frontier="benchmarked",           # baselines on this task's leaderboard
+    models=["auto"],                  # the product under test
+    frontier="benchmarked",           # vendor baselines benchmarked on this task
     wait=True,                        # block until terminal
 )
 
@@ -431,18 +351,18 @@ else:
     print("billed:", run.cost, "| raw µUSD:", run.cost_micro_usd)
 ```
 
-Eval compute is metered against your org balance (both the open candidates and
-any frontier baselines). An empty balance raises `InsufficientCreditsError` (402);
+Eval compute is metered against your org balance (both the auto runs and any
+frontier baselines). An empty balance raises `InsufficientCreditsError` (402);
 top up in the browser, since the SDK never exposes balance or payment.
 
 ### EvalResult
 
-One element of `run.results`: a single model's aggregate over the run.
+One element of `run.results`: a single candidate's aggregate over the run.
 
 | Property | Type | Notes |
 |---|---|---|
-| `model_id` | `str \| None` | The model evaluated. Open models appear as **per-task aliases** |
-| `kind` | `str \| None` | `"open"` or `"frontier"` |
+| `model_id` | `str \| None` | The candidate evaluated: `"auto"` or a frontier vendor id |
+| `kind` | `str \| None` | `"frontier"` on vendor baseline rows; unset on `"auto"` rows |
 | `quality_mean` | `float \| None` | Mean score in `[0, 1]` |
 | `quality_ci_low` | `float \| None` | 95% CI lower bound |
 | `quality_ci_high` | `float \| None` | 95% CI upper bound |
@@ -451,19 +371,23 @@ One element of `run.results`: a single model's aggregate over the run.
 | `error_count` | `int \| None` | Rows that errored |
 
 The point of a result row is the comparison: read `quality_mean` against the
-confidence interval to know whether a cheaper open model genuinely matches the
-frontier on your data, and `mean_cost_micro_usd` to see what each call costs.
+confidence interval to know whether `"auto"` genuinely matches the frontier on
+your data, and `mean_cost_micro_usd` to see what each call costs.
 
 ```python
+auto_row = next(r for r in run.results if r.model_id == "auto")
+
 for r in run.results:
-    cheaper_and_as_good = (
-        r.kind == "open"
-        and r.quality_ci_low is not None
-        and r.quality_ci_low >= 0.9
+    if r.kind != "frontier":
+        continue
+    matches = (
+        auto_row.quality_ci_high is not None
+        and r.quality_mean is not None
+        and auto_row.quality_ci_high >= r.quality_mean
     )
-    print(r.model_id, r.kind, f"{r.quality_mean:.3f}",
-          f"[{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]",
-          r.mean_cost_micro_usd, "<-- candidate" if cheaper_and_as_good else "")
+    print(f"{r.model_id}: q={r.quality_mean:.3f} at {r.mean_cost_micro_usd} µUSD/item"
+          f" — auto ({auto_row.quality_mean:.3f}) "
+          f"{'matches it within the CI' if matches else 'trails it'}")
 ```
 
 ## Money: `.cost` vs `.cost_micro_usd`
@@ -479,10 +403,11 @@ Three fields, two representations:
   org is billed.
 - `run.cost_micro_usd` is the **raw integer** in micro-USD. `1_000_000` = `$1.00`.
   Use it when you need the exact charge below cent precision.
-- Per-item and per-request **unit rates** stay in micro-USD on purpose:
-  `result.mean_cost_micro_usd` and `entry.cost_per_request_micro_usd`. Flooring a
-  fraction-of-a-cent unit rate to whole cents would collapse it to zero and erase
-  the open-vs-frontier comparison that is the whole reason you ran the eval.
+- Per-item **unit rates** stay in micro-USD on purpose:
+  `result.mean_cost_micro_usd` (and the `cost_micro_usd` on an
+  `auto.compare_frontier()` result). Flooring a fraction-of-a-cent unit rate to
+  whole cents would collapse it to zero and erase the auto-vs-frontier
+  comparison that is the whole reason you ran the eval.
 
 ```python
 from decimal import Decimal
@@ -503,7 +428,6 @@ the 402; topping up is browser-only.
 ## See also
 
 - [Running inference](../guide/inference.md) — `ChatCompletion`, streaming chunks, and the async iterator form
-- [Deploying endpoints](../guide/deploying-endpoints.md) — the `Endpoint` lifecycle and deploy progress events
-- [Finding the right model](../guide/discovery.md) — `Task`, `TaskMatch`, and `Leaderboard` in depth
+- [tasks](./tasks.md) — `Task` and `TaskMatch` in depth, and the "can Pareta do X?" flow
 - [Evaluating models](../guide/evaluation.md) — building `EvalSet`s, running evals, and reading `EvalRun` cost
-- [Core concepts](../guide/core-concepts.md) — aliases, hidden hardware, and metering, end to end
+- [Core concepts](../guide/core-concepts.md) — the auto story, hidden hardware, and metering, end to end

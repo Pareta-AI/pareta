@@ -1,6 +1,6 @@
 # Client (`Pareta`, `AsyncPareta`)
 
-The client is the one object you build and the only thing that talks to the network. It holds your API key, the environment URL, the timeout and retry policy, and an HTTP connection pool. Every call you make goes through it: deploying endpoints, running inference, browsing the catalog, evaluating models. There are two of them and they are mirror images: `Pareta` is synchronous, `AsyncPareta` is `async`/`await`. Pick one, build it once, reuse it.
+The client is the one object you build and the only thing that talks to the network. It holds your API key, the environment URL, the timeout and retry policy, and an HTTP connection pool. Every call you make goes through it: running `model="auto"` inference, browsing the catalog, evaluating auto against the frontier. There are two of them and they are mirror images: `Pareta` is synchronous, `AsyncPareta` is `async`/`await`. Pick one, build it once, reuse it.
 
 ```python
 from pareta import Pareta
@@ -9,7 +9,7 @@ with Pareta.from_env() as pa:                 # reads PARETA_API_KEY
     print(pa.models.list())
 ```
 
-Nothing else in the SDK is constructed directly. Resources like `pa.chat`, `pa.endpoints`, and `pa.evals` are attributes that hang off the client; you never instantiate them yourself.
+Nothing else in the SDK is constructed directly. Resources like `pa.chat`, `pa.tasks`, and `pa.evals` are attributes that hang off the client; you never instantiate them yourself.
 
 ## Build it from the environment
 
@@ -165,7 +165,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     completion = pa.chat.completions.create(
-        model="ep_a1b2c3",
+        model="auto",
         messages=[{"role": "user", "content": "Extract the parties."}],
     )
     print(completion.choices[0].message.content)
@@ -211,12 +211,14 @@ The client is a namespace router. Every capability hangs off it as an attribute.
 
 | Namespace | Sync type | Async type | What it does | Reference |
 |-----------|-----------|------------|--------------|-----------|
-| `chat` | `Chat` | `AsyncChat` | OpenAI-compatible inference via `chat.completions.create(...)`. Metered. | [chat](./chat.md) |
-| `models` | `Models` | `AsyncModels` | `models.list()` — the deployed, callable endpoints (OpenAI-compatible subset). | [models](./models.md) |
-| `endpoints` | `Endpoints` | `AsyncEndpoints` | `deploy`, `list`, `retrieve`, `start`, `stop`, `delete`, and `metrics(id)`. | [endpoints](./endpoints.md) |
-| `tasks` | `Tasks` | `AsyncTasks` | Browse the benchmark catalog: `list`, `retrieve`, `match`, `leaderboard`, `recommended`. | [tasks](./tasks.md) |
+| `chat` | `Chat` | `AsyncChat` | OpenAI-compatible inference via `chat.completions.create(model="auto", ...)`. Metered. | [chat](./chat.md) |
+| `models` | `Models` | `AsyncModels` | `models.list()` — the OpenAI-compatible model listing: exactly one entry, `"auto"`. | [models](./models.md) |
+| `tasks` | `Tasks` | `AsyncTasks` | The benchmark catalog behind auto: `list`, `retrieve`, `match`. | [tasks](./tasks.md) |
 | `evals` | `Evals` | `AsyncEvals` | `evals.sets`, `evals.runs`, and `evals.frontier_models(...)`. Metered. | [evals](./evals.md) |
 | `audio` | `Audio` | `AsyncAudio` | Speech: `audio.transcriptions(...)` (ASR) and `audio.speech(...)` (TTS). Metered per minute. | [audio](./audio.md) |
+| `auto` | `Auto` | `AsyncAuto` | `auto.metrics()` — your org's auto-traffic rollup — and `auto.compare_frontier(...)`, a metered frontier side-by-side. | [quickstart](../guide/quickstart.md) |
+
+The TypeScript client mirrors five of the six — `chat`, `models`, `tasks`, `evals`, `auto` — as camelCase methods on one Promise-only `Pareta`. `audio` is Python-only.
 
 A tour of the core namespaces against one client:
 
@@ -224,34 +226,33 @@ A tour of the core namespaces against one client:
 from pareta import Pareta
 
 with Pareta.from_env() as pa:
-    # tasks — discover what to deploy
-    task = "contract-key-fields"
-    print("recommended:", pa.tasks.recommended(task))      # a per-task alias
+    # tasks — "can Pareta do this?"
+    match = pa.tasks.match("extract key fields from contracts")
+    print(match.type, match.chosen.task_id if match.chosen else None)
 
-    # endpoints — deploy it (wait=True blocks through the deploy SSE stream)
-    ep = pa.endpoints.deploy(task=task, model="recommended", wait=True)
-    print("live:", ep.id, ep.status)
-
-    # chat — OpenAI-compatible inference against the endpoint id
+    # chat — OpenAI-compatible inference; "auto" is the only model id
     resp = pa.chat.completions.create(
-        model=ep.id,
+        model="auto",
         messages=[{"role": "user", "content": "Say hello."}],
     )
     print(resp.choices[0].message.content)
 
-    # models — the OpenAI-compatible list of callable endpoints
+    # models — the OpenAI-compatible list: exactly one entry, "auto"
     for m in pa.models.list():
         print(m.id, m.owned_by)
 
-    # evals — score candidates on your own data, billed total in dollars
+    # evals — benchmark "auto" against frontier baselines on your own data
     run = pa.evals.runs.create(
-        task=task,
+        task="contract-key-fields",
         items=[{"input": "…", "expected": "…"}],
-        models=["qwen-vl-2"],
+        models=["auto"],
         frontier="benchmarked",
         wait=True,
     )
     print("run cost:", run.cost)        # Decimal dollars, floored to cents
+
+    # auto — the org-level rollup of your routed traffic
+    metrics = pa.auto.metrics()
 ```
 
 The same code on the async client, with `await` and the async context manager:
@@ -262,11 +263,8 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        ep = await pa.endpoints.deploy(
-            task="contract-key-fields", model="recommended", wait=True,
-        )
         resp = await pa.chat.completions.create(
-            model=ep.id,
+            model="auto",
             messages=[{"role": "user", "content": "Say hello."}],
         )
         print(resp.choices[0].message.content)
@@ -274,33 +272,32 @@ async def main():
 asyncio.run(main())
 ```
 
-Two async differences worth pinning down: `pa.endpoints.metrics(id)` returns an `AsyncMetrics` object directly (not a coroutine), and its dimension methods are the things you await. See [Async](../guide/async.md) for the full sync-vs-async mapping.
+See [Async](../guide/async.md) for the full sync-vs-async mapping.
 
 ## Platform truths the client makes concrete
 
-These hold no matter how you build the client. They are why there is no GPU knob, no balance API, and no real model ids in the SDK.
+These hold no matter how you build the client. They are why there is no GPU knob, no balance API, and no model picker in the SDK.
 
-- **GPUs are hidden.** You configure a key, a URL, timeouts, and retries — never hardware. `endpoints.deploy(task=…, model=…)` takes a task and a model alias; Pareta resolves the GPU, tensor-parallelism, and quantization from its registry. There is no hardware parameter anywhere in the SDK. See [Deploy endpoints](../guide/deploying-endpoints.md).
-- **Models are per-task aliases.** Every model id you pass or read — in `deploy(model=…)`, on `tasks.leaderboard()` rows, in `run.results[].model_id`, in `endpoints.list()[].model` — is a per-task public alias like `qwen-vl-2`. Real internal ids never cross into the SDK. Frontier (vendor) ids are in the clear. See [Discovery](../guide/discovery.md).
-- **Inference and evals are metered against your org balance.** A successful `pa.chat.completions.create()` debits your balance; `pa.evals.runs.create()` debits for both open and frontier compute. An `EvalRun` reports its billed total on `run.cost` (a `Decimal` in dollars, floored to whole cents, so a sub-cent run reads `Decimal("0.00")`) and the raw value on `run.cost_micro_usd`. When the balance hits zero, both paths raise `InsufficientCreditsError` (402). Top-up is browser-only; the SDK exposes neither balance nor payment methods.
+- **Models and GPUs are hidden.** You configure a key, a URL, timeouts, and retries — never hardware, and never a model pick. `"auto"` is the only model id; Pareta plans each request and resolves the models, GPUs, tensor-parallelism, and quantization behind it. There is no hardware parameter anywhere in the SDK.
+- **Frontier ids are in the clear; open models stay behind `"auto"`.** The vendor ids you read — in `evals.frontier_models()`, on frontier rows of `run.results`, in `auto.compare_frontier(model=…)` — are public products. The open specialists auto routes to never surface as ids you pass or read.
+- **Inference and evals are metered against your org balance.** A successful `pa.chat.completions.create()` debits your balance — one debit per request, no matter how many internal model calls auto's plan makes; `pa.evals.runs.create()` debits for both auto and frontier compute. An `EvalRun` reports its billed total on `run.cost` (a `Decimal` in dollars, floored to whole cents, so a sub-cent run reads `Decimal("0.00")`) and the raw value on `run.cost_micro_usd`. When the balance hits zero, both paths raise `InsufficientCreditsError` (402). Top-up is browser-only; the SDK exposes neither balance nor payment methods.
 
   ```python
   from pareta import InsufficientCreditsError
 
   try:
-      pa.chat.completions.create(model=ep.id, messages=[{"role": "user", "content": "ping"}])
+      pa.chat.completions.create(model="auto", messages=[{"role": "user", "content": "ping"}])
   except InsufficientCreditsError:
       print("Out of credit — top up in the dashboard.")
   ```
 
-- **Inference is OpenAI-compatible.** `base_url` plus your `pareta_sk_…` key is a drop-in OpenAI endpoint. You can point the `openai` SDK at the same `base_url` to call a deployed endpoint; this SDK adds the control plane (deploy, eval, discovery) the `openai` client cannot do. See [Inference](../guide/inference.md).
+- **Inference is OpenAI-compatible.** `base_url` plus your `pareta_sk_…` key is a drop-in OpenAI endpoint. You can point the `openai` SDK at the same `base_url` and send `model="auto"`; this SDK adds the control plane (evals, catalog match, auto metrics) the `openai` client cannot do. See [Inference](../guide/inference.md).
 
 ## See also
 
 - [Configuration](../guide/configuration.md) — the full configuration guide: `from_env`, `base_url`, timeouts, retries, custom transports, and the configuration cookbook.
-- [Inference](../guide/inference.md) — `chat.completions.create`, streaming, and metering.
-- [Deploy endpoints](../guide/deploying-endpoints.md) — deploy a model to a task and operate it.
-- [Discovery](../guide/discovery.md) — browse the catalog, match intent, read leaderboards.
-- [Evaluation](../guide/evaluation.md) — score models on your own data, including `run.cost`.
+- [Inference](../guide/inference.md) — `chat.completions.create(model="auto", ...)`, streaming, and metering.
+- [tasks](./tasks.md) — browse the catalog and match intent: "can Pareta do X?".
+- [Evaluation](../guide/evaluation.md) — benchmark `"auto"` on your own data, including `run.cost`.
 - [Errors and retries](../guide/errors-and-retries.md) — the `ParetaError` hierarchy and retry behavior.
 - [Async](../guide/async.md) — the sync-vs-async mapping for every resource.

@@ -46,3 +46,23 @@ def test_auth_header_and_path():
 def test_context_manager_closes():
     with sync_client(lambda r: json_response(200, {"data": []})) as pa:
         assert pa.models.list() is not None
+
+
+def test_auto_only_surface_no_endpoints_or_leaderboard():
+    """1.0.0 surface lock: the endpoints namespace and the leaderboard/
+    recommended discovery methods are REMOVED (not hidden) from both clients,
+    and the dropped types are gone from the package exports."""
+    pa = Pareta(api_key="pareta_sk_x")
+    assert not hasattr(pa, "endpoints")
+    assert not hasattr(pa.tasks, "leaderboard")
+    assert not hasattr(pa.tasks, "recommended")
+
+    apa = pareta.AsyncPareta(api_key="pareta_sk_x")
+    assert not hasattr(apa, "endpoints")
+    assert not hasattr(apa.tasks, "leaderboard")
+    assert not hasattr(apa.tasks, "recommended")
+
+    for name in ("Endpoint", "Leaderboard", "LeaderboardEntry"):
+        assert not hasattr(pareta, name)
+        assert name not in pareta.__all__
+    assert hasattr(pareta, "FrontierModel")   # evals still returns these

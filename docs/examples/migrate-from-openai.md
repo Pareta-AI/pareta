@@ -5,98 +5,74 @@ Pareta inference is OpenAI-compatible. If you already call `chat.completions.cre
 This page covers two things:
 
 1. **Keep using `openai` for inference**, the smallest possible diff: change `base_url`, `api_key`, and `model="auto"`. No deploy step, nothing to provision.
-2. **Switch to the `pareta` SDK** for the things OpenAI does not do: evaluating `"auto"` and open models against frontier baselines on your own data, reading your auto metrics, discovering tasks, and deploying dedicated endpoints when you want to pin one model.
+2. **Switch to the `pareta` SDK** for the things OpenAI does not do: evaluating `"auto"` against frontier baselines on your own data, reading your auto metrics, and matching intent to the task catalog.
 
-The mental model: OpenAI gives you one client for one purpose (inference against a model you name). Pareta splits that into a data plane (inference, OpenAI-compatible, where `"auto"` names the routing brain rather than a fixed model) and a control plane (eval / discover / deploy, which is Pareta-native). You migrate the data plane by changing three strings; you adopt the control plane when you want it.
+The mental model: OpenAI gives you one client for one purpose (inference against a model you name). Pareta splits that into a data plane (inference, OpenAI-compatible, where `"auto"` names the routing brain rather than a fixed model) and a control plane (evaluate / match / monitor, which is Pareta-native). You migrate the data plane by changing three strings; you adopt the control plane when you want proof.
 
 ## The one-diff migration
 
-You have this today:
+The whole migration, as the diff you'd actually commit — removed lines are your OpenAI code today, added lines are the Pareta version:
 
 **Python**
 
-```python
-from openai import OpenAI
+```diff
+ from openai import OpenAI
 
-client = OpenAI(api_key="sk-...")  # talks to api.openai.com
-resp = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Extract the invoice total: ..."}],
-)
-print(resp.choices[0].message.content)
+-client = OpenAI(api_key="sk-...")  # talks to api.openai.com
++client = OpenAI(
++    api_key="pareta_sk_...",                 # a Pareta key, not an OpenAI key
++    base_url="https://api.pareta.ai/v1",     # note the /v1 suffix
++)
+ resp = client.chat.completions.create(
+-    model="gpt-4o-mini",
++    model="auto",                            # the routing brain, not a fixed model
+     messages=[{"role": "user", "content": "Extract the invoice total: ..."}],
+ )
+ print(resp.choices[0].message.content)
 ```
 
 **TypeScript**
 
-```typescript
-import OpenAI from "openai";
+```diff
+ import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: "sk-..." }); // talks to api.openai.com
-const resp = await client.chat.completions.create({
-  model: "gpt-4o-mini",
-  messages: [{ role: "user", content: "Extract the invoice total: ..." }],
-});
-console.log(resp.choices[0].message.content);
-```
-
-Change the client construction and the `model`:
-
-**Python**
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    api_key="pareta_sk_...",                 # a Pareta key, not an OpenAI key
-    base_url="https://api.pareta.ai/v1",     # note the /v1 suffix
-)
-resp = client.chat.completions.create(
-    model="auto",                            # the routing brain, not "gpt-4o-mini"
-    messages=[{"role": "user", "content": "Extract the invoice total: ..."}],
-)
-print(resp.choices[0].message.content)
-```
-
-**TypeScript**
-
-```typescript
-import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: "pareta_sk_...",                 // a Pareta key, not an OpenAI key
-  baseURL: "https://api.pareta.ai/v1",     // note the /v1 suffix
-});
-const resp = await client.chat.completions.create({
-  model: "auto",                           // the routing brain, not "gpt-4o-mini"
-  messages: [{ role: "user", content: "Extract the invoice total: ..." }],
-});
-console.log(resp.choices[0].message.content);
+-const client = new OpenAI({ apiKey: "sk-..." }); // talks to api.openai.com
++const client = new OpenAI({
++  apiKey: "pareta_sk_...",                 // a Pareta key, not an OpenAI key
++  baseURL: "https://api.pareta.ai/v1",     // note the /v1 suffix
++});
+ const resp = await client.chat.completions.create({
+-  model: "gpt-4o-mini",
++  model: "auto",                           // the routing brain, not a fixed model
+   messages: [{ role: "user", content: "Extract the invoice total: ..." }],
+ });
+ console.log(resp.choices[0].message.content);
 ```
 
 Three things changed, nothing else:
 
 - **`api_key`** is a `pareta_sk_...` key (mint it in the dashboard; key management is browser-only). It rides in the same `Authorization: Bearer` header the OpenAI client already sends.
 - **`base_url`** is `https://api.pareta.ai/v1`. The OpenAI client appends `/chat/completions` to whatever base URL you give it, and Pareta serves the route at `/v1/chat/completions`, so the base URL must include the `/v1` suffix.
-- **`model`** is the literal string `"auto"` — Pareta's routing brain. There is nothing to deploy or provision first. (To pin one specific open model on dedicated capacity instead, pass an endpoint id from `endpoints.deploy(...).id` — see [Deploy a model and call it](./deploy-and-infer.md).)
+- **`model`** is the literal string `"auto"` — Pareta's routing brain, and the only model id. There is nothing to deploy or provision first, and no model to pick: "which model?" is the question Pareta answers for you, per request.
 
 Streaming, `temperature`, `max_tokens`, `top_p`, `stop`, system messages, and the response shape (`resp.choices[0].message.content`, `resp.usage`) all behave exactly as they do against OpenAI, because the wire format is the same. Your existing response-parsing code does not change.
 
 ### Why this works
 
-Pareta serves inference in the vLLM OpenAI-compatible format: data-only SSE for streams, the same request body, the same `ChatCompletion` / `ChatCompletionChunk` JSON shapes. The OpenAI SDK cannot tell the difference. The only Pareta-specific facts that leak through are the key prefix and the fact that `model` names an endpoint you deployed rather than a hosted vendor model.
+Pareta serves inference in the vLLM OpenAI-compatible format: data-only SSE for streams, the same request body, the same `ChatCompletion` / `ChatCompletionChunk` JSON shapes. The OpenAI SDK cannot tell the difference. The only Pareta-specific facts that leak through are the key prefix and the fact that `"auto"` names the routing brain rather than a hosted vendor model.
 
 ## Where the OpenAI SDK stops
 
-The OpenAI SDK is built around calling models that already exist on a vendor's servers. Pareta's reason to exist is the opposite: you bring a task, Pareta stands up an open-weights endpoint to serve it, and you measure it against frontier models on your own data before you commit. None of that has an OpenAI-SDK equivalent:
+The OpenAI SDK is built around calling a model you name. Pareta's reason to exist is the opposite: `"auto"` answers "which model?" for you, per request — and the SDK's job is to let you prove that routing on your own data, watch what it costs, and check what it covers. None of that has an OpenAI-SDK equivalent:
 
 | You want to... | OpenAI SDK | Pareta SDK |
 | --- | --- | --- |
 | Call a model | `client.chat.completions.create(...)` | works as-is (OpenAI-compatible) |
-| Stand up your own serving endpoint | not available | `pa.endpoints.deploy(task=..., model=...)` |
-| Compare candidate models on your data | not available | `pa.evals.runs.create(...)` |
-| Compare open models vs frontier baselines | not available | `frontier=` on the eval run |
-| Find the right task / model for an intent | not available | `pa.tasks.match(...)`, `pa.tasks.leaderboard(...)` |
-| List your callable endpoints | `client.models.list()` (vendor catalog) | `pa.models.list()` (your endpoints) |
+| Benchmark `"auto"` vs frontier baselines on your data | not available | `pa.evals.runs.create(...)` |
+| Ask "can Pareta do X?" | not available | `pa.tasks.match(...)` |
+| Watch requests, success rate, spend, projected savings | not available | `pa.auto.metrics()` |
+| Run one prompt against a frontier vendor, side-by-side | not available | `pa.auto.compare_frontier(...)` |
+| List callable model ids | `client.models.list()` (vendor catalog) | `pa.models.list()` (the single `"auto"` entry) |
 
 For everything in the bottom rows, install and use the `pareta` SDK. It also speaks OpenAI-compatible inference through `pa.chat.completions.create(...)`, so once you adopt it you can drop the second `openai` client entirely and use one library for both planes.
 
@@ -237,13 +213,13 @@ See [Streaming chat completions](./streaming-chat.md) for the full streaming det
 
 ### Listing models means something different
 
-In the OpenAI SDK, `client.models.list()` returns the vendor's hosted catalog. In Pareta, `pa.models.list()` returns **your org's deployed, callable endpoints**, the OpenAI-compatible subset with a live `url`. Each `Model.id` is an endpoint id you can pass straight to `chat.completions.create(model=...)`:
+In the OpenAI SDK, `client.models.list()` returns the vendor's hosted catalog — the menu you pick from. In Pareta there is no menu: `pa.models.list()` returns exactly one entry, `"auto"`, because which model serves a request is decided per request, behind that id. The call exists so OpenAI-style tooling that discovers ids by listing keeps working:
 
 **Python**
 
 ```python
 for m in pa.models.list():
-    print(m.id, m.owned_by)   # m.id is callable as `model=...`
+    print(m.id, m.owned_by)   # auto pareta — m.id is callable as `model=...`
 ```
 
 **TypeScript**
@@ -251,58 +227,30 @@ for m in pa.models.list():
 ```typescript
 const models = await pa.models.list();
 for (const m of models) {
-  console.log(m.id, m.ownedBy); // m.id is callable as `model: ...`
+  console.log(m.id, m.ownedBy); // auto pareta — m.id is callable as `model: ...`
 }
 ```
-
-If you want full endpoint records (status, task, the deployed model alias) rather than the OpenAI-compatible subset, use `pa.endpoints.list()` instead, which returns `Endpoint` objects.
 
 ## Three platform facts that have no OpenAI equivalent
 
 These are the differences that matter once you are past the inference call. They are not gotchas; they are the point of the platform.
 
-### 1. You deploy your own endpoint, and GPUs are hidden
+### 1. There is no model picker, and GPUs are hidden
 
-There is no "pick gpt-4o" step. You pick a **task** and let Pareta serve an open-weights model for it. `deploy()` takes a task and a model and nothing about hardware, no GPU, tensor-parallel, quantization, or run-mode knob. Pareta resolves the serving class from its registry.
+There is no "pick gpt-4o" step — and no Pareta equivalent of one. Every request goes to `"auto"`, and Pareta plans it, routes each part to benchmark-proven open specialists, verifies checkable outputs, and falls back to a frontier model when that's the right call. Nothing to deploy, no hardware knob anywhere in the API: no GPU, tensor-parallel, quantization, or run-mode setting. Serving is Pareta's problem.
 
-**Python**
+To see *what* auto routes across, browse the task catalog with `pa.tasks.list()` or map a sentence of intent onto it with `pa.tasks.match(...)` — see [Discovery](#discovery-checking-what-auto-covers) below.
 
-```python
-# Deploy the recommended open model for a task, block until it is live.
-endpoint = pa.endpoints.deploy(
-    task="contract-key-fields",   # required: a subtask id from the catalog
-    model="recommended",          # default; resolves to the task's curated pick
-    wait=True,                    # block until live and return the Endpoint
-)
-print(endpoint.id)        # the value you pass as `model` to chat.completions.create
-print(endpoint.is_live)   # True after a wait=True deploy
-```
+### 2. Open-weights models stay behind `"auto"`
 
-**TypeScript**
-
-```typescript
-// Deploy the recommended open model for a task, block until it is live.
-const endpoint = await pa.endpoints.deploy({
-  task: "contract-key-fields",   // required: a subtask id from the catalog
-  model: "recommended",          // default; resolves to the task's curated pick
-  wait: true,                    // block until live and return the Endpoint
-});
-console.log(endpoint.id);        // the value you pass as `model` to chat.completions.create
-console.log(endpoint.isLive);    // true after a wait: true deploy
-```
-
-`endpoint.id` (the name) is what `chat.completions.create(model=...)` expects, not `endpoint.model`, which is the per-task alias of the weights that were deployed. Full walkthrough in [Deploy a model and call it](./deploy-and-infer.md).
-
-### 2. Models are per-task aliases, not raw weight ids
-
-OpenAI model names are global and stable (`gpt-4o-mini`). Pareta open-weights models are exposed as **per-task public aliases**; the real open-weights ids never cross into the SDK. So `endpoints.deploy(model=...)`, the rows in `pa.tasks.leaderboard(task_id)`, `endpoint.model`, and `result.model_id` on an eval run are all aliases. Frontier (vendor) ids, OpenAI, Anthropic, and so on, are passed in the clear, because those are public vendor model names. The practical upshot: pass `model="recommended"` (or a task's alias) to deploy, and let Pareta resolve it; do not try to pass a HuggingFace repo id.
+OpenAI model names are global and stable (`gpt-4o-mini`). Pareta's open-weights models never cross into the SDK at all — no HuggingFace repo ids, no model roster to browse. The only place model names appear in the clear is the frontier (vendor) side: eval baselines and `pa.auto.compare_frontier(model=...)` take public vendor ids (`gpt-5.5`, `claude-sonnet-4-6`, ...), because those are public names. Everything open-weights is a routing decision behind the one id you already pass.
 
 ### 3. Inference and evals are metered against your org balance
 
 OpenAI bills the account behind the key out of band; you never see a price on the response. On Pareta, the same key debits a shared **org balance**, and the eval path surfaces the cost back to you in dollars.
 
-- **Inference debits on success.** Each completed `chat.completions.create()` call debits the org balance. Cost is metered server-side, not returned on the completion object.
-- **Evals debit for open + frontier compute**, and the run reports its spend: `run.cost` is a `Decimal` in dollars (floored to whole cents per Pareta's billing convention, for example 5 micro-USD reads `Decimal("0.00")`), with the raw integer on `run.cost_micro_usd`.
+- **Inference debits on success — one debit per request.** Each completed `chat.completions.create()` call debits the org balance once, no matter how many internal model calls auto's plan makes; orchestration overhead is Pareta's cost, not yours. Cost is metered server-side, not returned on the completion object.
+- **Evals debit for auto + frontier compute**, and the run reports its spend: `run.cost` is a `Decimal` in dollars (floored to whole cents per Pareta's billing convention, for example 5 micro-USD reads `Decimal("0.00")`), with the raw integer on `run.cost_micro_usd`. A FAILED run is not charged.
 - **A zero balance raises `InsufficientCreditsError` (402)** on both the inference and eval paths.
 - **Top-up is browser-only.** The SDK consumes credit; it never exposes balance, payment methods, or a way to add funds. There is no API call for it.
 
@@ -343,7 +291,7 @@ Note that this error reaches the OpenAI client too: if you stayed on the one-dif
 
 ## Evaluate before you commit (the OpenAI SDK can't do this)
 
-The biggest reason to reach for the `pareta` SDK rather than the bare `openai` client: before you wire a model into production, run your own data through a set of candidate open models and frontier baselines and read back quality and cost. There is no OpenAI-SDK analog.
+The biggest reason to reach for the `pareta` SDK rather than the bare `openai` client: before you trust the routing in production, run your own data through `"auto"` and frontier baselines and read back per-contender quality and cost. There is no OpenAI-SDK analog.
 
 **Python**
 
@@ -358,9 +306,9 @@ run = pa.evals.runs.create(
         {"input": "...", "expected": "..."},
         {"input": "...", "expected": "..."},
     ],
-    models=["contract-kie-1", "contract-kie-2"],  # per-task open-model aliases
-    frontier="benchmarked",                       # frontier baselines on this task's leaderboard
-    wait=True,                                     # poll until terminal, then return
+    models=["auto"],          # the candidate you ship
+    frontier="benchmarked",   # frontier models benchmarked on this task, as baselines
+    wait=True,                # poll until terminal, then return
 )
 
 print(run.status)            # "completed" or "failed"
@@ -383,9 +331,9 @@ const run = await pa.evals.runs.create({
     { input: "...", expected: "..." },
     { input: "...", expected: "..." },
   ],
-  models: ["contract-kie-1", "contract-kie-2"], // per-task open-model aliases
-  frontier: "benchmarked",                      // frontier baselines on this task's leaderboard
-  wait: true,                                   // poll until terminal, then return
+  models: ["auto"],          // the candidate you ship
+  frontier: "benchmarked",   // frontier models benchmarked on this task, as baselines
+  wait: true,                // poll until terminal, then return
 });
 
 console.log(run.status);     // "completed" or "failed"
@@ -396,25 +344,19 @@ for (const r of run.results) {
 }
 ```
 
-`frontier=` accepts `None`/`"none"` (no baselines), `"all"` (every frontier model for the task), `"benchmarked"` (the frontier models on the task's leaderboard), or an explicit list of frontier ids. You can pull the roster with `pa.evals.frontier_models(task="contract-key-fields")` to see what is available, including which entries are `vision`-capable and which are `benchmarked` on that task. See the evaluation walkthrough for eval sets, document uploads, and the async path.
+`frontier=` accepts `None`/`"none"` (no baselines), `"all"` (every frontier model for the task), `"benchmarked"` (the frontier models with a benchmark score on the task), or an explicit list of frontier ids. You can pull the roster with `pa.evals.frontier_models(task="contract-key-fields")` to see what is available, including which entries are `vision`-capable and which are `benchmarked` on that task. See [Evaluate on your data](./evaluate-on-your-data.md) for eval sets, document uploads, and the async path.
 
-## Discovery: turning intent into a task
+## Discovery: checking what auto covers
 
-If you do not yet know which task id to deploy or eval against, the `tasks` resource maps free-text intent onto the catalog. Again, no OpenAI equivalent:
+"Can Pareta do X?" has a typed answer. `tasks.match(...)` maps free-text intent onto the benchmark catalog auto routes across — useful before you build, and for picking the `task` an eval run scores against. Again, no OpenAI equivalent:
 
 **Python**
 
 ```python
 match = pa.tasks.match("pull key fields out of vendor contracts", top_k=5)
-if match.matched and match.chosen:
-    task_id = match.chosen.task_id
-    print("best task:", task_id, "confidence:", match.chosen.confidence)
-
-# Once you have a task id, see what "recommended" will deploy and how models rank:
-print(pa.tasks.recommended(task_id))      # the deployable alias deploy(model=...) will use
-board = pa.tasks.leaderboard(task_id)
-for entry in board.models:
-    print(entry.name, entry.kind, entry.quality, entry.cost_per_request_micro_usd)
+if match.type == "task" and match.chosen:
+    task_id = match.chosen.task_id          # a benchmarked task, e.g. for evals.runs.create(task=...)
+    print("best task:", task_id, "confidence:", match.confidence)
 ```
 
 **TypeScript**
@@ -422,19 +364,12 @@ for entry in board.models:
 ```typescript
 const match = await pa.tasks.match("pull key fields out of vendor contracts", { topK: 5 });
 if (match.matched && match.chosen?.taskId) {
-  const taskId = match.chosen.taskId;
+  const taskId = match.chosen.taskId;       // a benchmarked task, e.g. for evals.runs.create({ task })
   console.log("best task:", taskId, "confidence:", match.chosen.confidence);
-
-  // Once you have a task id, see what "recommended" will deploy and how models rank:
-  console.log(await pa.tasks.recommended(taskId)); // the deployable alias deploy(model: ...) will use
-  const board = await pa.tasks.leaderboard(taskId);
-  for (const entry of board.models) {
-    console.log(entry.name, entry.kind, entry.quality, entry.costPerRequestMicroUsd);
-  }
 }
 ```
 
-`match()` raises `ValueError` on an empty query. `recommended()` and `leaderboard()` are available on the synchronous `tasks` resource.
+`match.type` (Python) is one of `"task"` (a benchmarked task fit), `"capability"` (a general lane like chat or coding), `"unsupported"` (a correct "no", not an error), or `"none"`. Browse the full catalog with `pa.tasks.list()` or one task with `pa.tasks.retrieve(task_id)`. `match()` raises `ValueError` on an empty query.
 
 ## Errors: from OpenAI exceptions to Pareta exceptions
 
@@ -444,13 +379,13 @@ If you keep the `openai` client, you keep OpenAI's exception types. If you adopt
 
 ```python
 from pareta import (
-    ParetaError,               # base class; also raised on a failed deploy
+    ParetaError,               # base class
     AuthenticationError,       # 401 - bad or missing key
     InsufficientCreditsError,  # 402 - org out of credit; top up in the dashboard
     PermissionDeniedError,     # 403
-    NotFoundError,             # 404 - unknown endpoint or task
+    NotFoundError,             # 404 - unknown task or resource id
     RateLimitError,            # 429 - throttled (auto-retried)
-    EndpointNotReadyError,     # 503 - endpoint stopped, cold, or provider down
+    EndpointNotReadyError,     # 503 - a serving backend is warming (auto-retried)
     BadRequestError,           # 400/422 - malformed request
 )
 ```
@@ -459,18 +394,18 @@ from pareta import (
 
 ```typescript
 import {
-  ParetaError,              // base class; also raised on a failed deploy
+  ParetaError,              // base class
   AuthenticationError,      // 401 - bad or missing key
   InsufficientCreditsError, // 402 - org out of credit; top up in the dashboard
   PermissionDeniedError,    // 403
-  NotFoundError,            // 404 - unknown endpoint or task
+  NotFoundError,            // 404 - unknown task or resource id
   RateLimitError,           // 429 - throttled (auto-retried)
-  EndpointNotReadyError,    // 503 - endpoint stopped, cold, or provider down
+  EndpointNotReadyError,    // 503 - a serving backend is warming (auto-retried)
   BadRequestError,          // 400/422 - malformed request
 } from "pareta";
 ```
 
-The rough correspondence to OpenAI: `AuthenticationError` ↔ 401, `RateLimitError` ↔ 429, `BadRequestError` ↔ 400/422, `NotFoundError` ↔ 404. The two without OpenAI analogs are `InsufficientCreditsError` (402, the org-balance gate above) and `EndpointNotReadyError` (503, raised when you call an endpoint that is stopped or still cold, start it with `pa.endpoints.start(endpoint_id)` and retry). The client auto-retries 429s and transient 5xx/timeouts with exponential backoff (`max_retries`, default 2).
+The rough correspondence to OpenAI: `AuthenticationError` ↔ 401, `RateLimitError` ↔ 429, `BadRequestError` ↔ 400/422, `NotFoundError` ↔ 404. The two without OpenAI analogs are `InsufficientCreditsError` (402, the org-balance gate above) and `EndpointNotReadyError` (503, a serving backend behind auto is warming or briefly unavailable; the client retries 503s automatically, so if it surfaces, wait briefly and retry the call). The client auto-retries 429s and transient 5xx/timeouts with exponential backoff (`max_retries`, default 2).
 
 ## Async
 
@@ -543,9 +478,10 @@ This is the same async shape the `openai` SDK uses (`AsyncOpenAI`, `await create
 - [ ] Benchmark it: run your own data through `pa.evals` with `models=["auto"]` and a frontier baseline before you commit.
 - [ ] Map your error handling: 402 becomes `InsufficientCreditsError`, 503 becomes `EndpointNotReadyError`.
 - [ ] Keep your org balance funded (top-up is browser-only); a zero balance stops both inference and evals.
-- [ ] (Optional) Pin a dedicated endpoint for a fixed-model workload — see [Deploy a model and call it](./deploy-and-infer.md).
+- [ ] (Optional) Watch the routing pay for itself: `pa.auto.metrics()` — requests, success rate, spend, projected savings vs frontier.
 
 ## Next steps
 
-- [Deploy a model and call it](./deploy-and-infer.md), get the endpoint id you pass as `model`.
+- [Evaluate on your data](./evaluate-on-your-data.md), the proof step: `"auto"` vs frontier baselines on your own rows.
 - [Streaming chat completions](./streaming-chat.md), the full streaming and async story.
+- [Cost & quality monitoring](./cost-and-metrics.md), watch your `"auto"` traffic with `auto.metrics()`.

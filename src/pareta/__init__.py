@@ -11,8 +11,8 @@ model when that's the right call. One request, one bill.
 Inference is OpenAI-compatible, so you can equally point the `openai` SDK at
 `base_url` + your `pareta_sk_` key with ``model="auto"``. The SDK's unique
 value is everything around that call: evals on your own data (with "auto" as
-a first-class contender), auto metrics, discovery, and the dedicated-endpoint
-control plane.
+a first-class contender), auto metrics + frontier comparison, and task
+discovery (``tasks.match``).
 """
 
 from ._client import Pareta, AsyncPareta
@@ -39,7 +39,6 @@ from ._models import (
     Usage,
     Model,
     ModelList,
-    Endpoint,
     Task,
     TaskMatch,
     TaskMatchCandidate,
@@ -50,8 +49,6 @@ from ._models import (
     EvalRun,
     EvalResult,
     EvalItemResult,
-    Leaderboard,
-    LeaderboardEntry,
     FrontierModel,
 )
 
@@ -80,7 +77,6 @@ __all__ = [
     "Usage",
     "Model",
     "ModelList",
-    "Endpoint",
     "Task",
     "TaskMatch",
     "TaskMatchCandidate",
@@ -91,7 +87,5 @@ __all__ = [
     "EvalRun",
     "EvalResult",
     "EvalItemResult",
-    "Leaderboard",
-    "LeaderboardEntry",
     "FrontierModel",
 ]

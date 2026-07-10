@@ -141,63 +141,6 @@ class ModelList(_Base):
         return len(self._raw.get("data") or [])
 
 
-class Endpoint(_Base):
-    """A deployed endpoint. `id` (== name) is what you pass to
-    `chat.completions.create(model=…)`. `model` is the per-task public alias
-    (real ids never cross the D3 boundary); `to_dict()` has the full record."""
-
-    @property
-    def id(self) -> str | None:
-        return self._raw.get("id") or self._raw.get("name")
-
-    @property
-    def name(self) -> str | None:
-        return self._raw.get("name")
-
-    @property
-    def model(self) -> str | None:
-        return self._raw.get("model")
-
-    @property
-    def status(self) -> str | None:
-        return self._raw.get("status")
-
-    @property
-    def task(self) -> str | None:
-        return self._raw.get("taskName") or self._raw.get("task")
-
-    @property
-    def url(self) -> str | None:
-        return self._raw.get("url")
-
-    @property
-    def is_live(self) -> bool:
-        return self._raw.get("status") == "live"
-
-    @property
-    def recommended_system_prompt(self) -> str | None:
-        """For a structured-extraction endpoint (contract / SEC / ICD …), the
-        system prompt the benchmark was measured with. The proxy applies it
-        automatically when you send no `system` message, so a deployed model
-        matches its leaderboard quality by default; it's returned here so you can
-        read it, or override it by sending your own `system` message. `None` when
-        the task has no injectable prompt (see `prompt_scaffold` for classifiers)."""
-        return self._raw.get("recommendedSystemPrompt")
-
-    @property
-    def prompt_scaffold(self) -> str | None:
-        """For a fixed-label classification endpoint, a copy-and-customize `system`
-        prompt template. Unlike `recommended_system_prompt` it is NEVER auto-applied
-        — the label set is yours, not the benchmark's — so you fill in your own
-        categories and send it as your `system` message. `None` for other tasks."""
-        return self._raw.get("promptScaffold")
-
-
-def _endpoint_list(raw) -> list[Endpoint]:
-    """GET /v1/endpoints returns a bare JSON array."""
-    return [Endpoint(e) for e in (raw or [])]
-
-
 # ── tasks ─────────────────────────────────────────────────────────────
 class Task(_Base):
     @property
@@ -485,65 +428,10 @@ class EvalResult(_Base):
         return [EvalItemResult(it) for it in (self._raw.get("per_item") or [])]
 
 
-class LeaderboardEntry(_Base):
-    @property
-    def name(self) -> str | None:
-        return self._raw.get("name")
-
-    @property
-    def kind(self) -> str | None:
-        return self._raw.get("kind")
-
-    @property
-    def quality(self) -> float | None:
-        return self._raw.get("quality")
-
-    @property
-    def cost_per_request_micro_usd(self) -> int | None:
-        return self._raw.get("cost_per_request_micro_usd")
-
-    @property
-    def context_k(self) -> int | None:
-        return self._raw.get("context_k")
-
-    @property
-    def run_mode(self) -> str | None:
-        return self._raw.get("run_mode")
-
-
-class Leaderboard(_Base):
-    """Models ranked for a task. `recommended` is the deployable pick;
-    `frontier` is the savings baseline."""
-
-    @property
-    def task_id(self) -> str | None:
-        return self._raw.get("task_id")
-
-    @property
-    def metric(self) -> str | None:
-        return self._raw.get("metric")
-
-    @property
-    def cost_unit(self) -> str | None:
-        return self._raw.get("cost_unit")
-
-    @property
-    def recommended(self) -> str | None:
-        return self._raw.get("recommended")
-
-    @property
-    def models(self) -> list[LeaderboardEntry]:
-        return [LeaderboardEntry(m) for m in (self._raw.get("models") or [])]
-
-    @property
-    def frontier(self) -> LeaderboardEntry | None:
-        f = self._raw.get("frontier")
-        return LeaderboardEntry(f) if f else None
-
-
 class FrontierModel(_Base):
     """A vendor frontier model you can evaluate against (from the eval pool).
-    `benchmarked` (only when a task is given) = it's on that task's leaderboard."""
+    `benchmarked` (only when a task is given) = it's in that task's benchmark
+    roster, so it has published quality/cost numbers to compare against."""
 
     @property
     def id(self) -> str | None:
@@ -560,10 +448,6 @@ class FrontierModel(_Base):
     @property
     def benchmarked(self) -> bool:
         return bool(self._raw.get("benchmarked"))
-
-
-def _leaderboard(raw) -> Leaderboard:
-    return Leaderboard(raw or {})
 
 
 def _frontier_models(raw) -> list[FrontierModel]:

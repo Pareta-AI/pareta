@@ -1,6 +1,6 @@
 # `evals`: evaluate models on your own data
 
-`client.evals` runs the only benchmark that matters: how candidate models score on **your** rows. You hand Pareta a task and a list of labeled items, name a slate of open-weights candidates (and optionally frontier baselines to beat), and get back per-model quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs the open candidates and the frontier baselines on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
 
 The namespace has three parts:
 
@@ -29,23 +29,23 @@ run = pa.evals.runs.create(
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
     ],
-    models=["contract-kie-1", "contract-kie-2"],  # per-task open aliases
-    frontier="benchmarked",                        # vendor baselines on this leaderboard
-    wait=True,                                     # block until the run is terminal
+    models=["auto"],         # the product under test
+    frontier="benchmarked",  # vendor baselines benchmarked on this task
+    wait=True,               # block until the run is terminal
 )
 
 print(run.status)             # "completed"
 print(f"billed ${run.cost}")  # Decimal dollars, floored to cents
 
 for r in run.results:
-    print(f"{r.model_id:16} {r.kind:8} q={r.quality_mean:.3f} "
+    print(f"{r.model_id:16} q={r.quality_mean:.3f} "
           f"[{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]  "
           f"~{r.mean_cost_micro_usd} uUSD/item  ({r.n_succeeded} ok, {r.error_count} err)")
 ```
 
-That single call created the eval set inline, started the run, polled it to completion, and returned an `EvalRun` with one aggregate per model. The sections below unpack each piece.
+That single call created the eval set inline, started the run, polled it to completion, and returned an `EvalRun` with one aggregate per candidate. The sections below unpack each piece.
 
-The ids in `models=` are **per-task public aliases** (`{family}-{rank}`), not raw model names; they come from a task's leaderboard. Frontier (vendor) ids are in the clear. See [`tasks`](./tasks.md) for where the aliases come from and [`models`](./models.md) for why real ids never cross the SDK boundary.
+The candidates are `"auto"` plus vendor ids: `models=["auto"]` puts the product under test, and `frontier=` adds the vendor baselines to beat. Frontier ids are in the clear because they are public products — take them from [`frontier_models`](#evalsfrontier_models-frontier-baseline-roster). The open specialists auto routes to are never individually named: the thing you measure is the routed product, not its parts.
 
 ## `evals.sets`: evaluation datasets
 
@@ -194,7 +194,7 @@ def create(
 
 You drive it one of two ways. Pass **`eval_set=<id>`** to run against an existing set, **or** pass **`task=...` + `items=...`** to create a set inline in the same call. Passing neither raises `ValueError`.
 
-- `models` (required): the list of open candidate aliases to evaluate. Required even when `frontier` is set; an empty `models` with no frontier ids raises `ValueError`.
+- `models` (required): the candidate list — pass `["auto"]`. Required even when `frontier` is set; an empty `models` with no frontier ids raises `ValueError`.
 - `frontier` (default `None`): the vendor baselines to score alongside your candidates. Keyword or explicit list, [resolved SDK-side](#frontier-resolution).
 - `name` (optional): run label; also used as the inline set's name.
 - `wait` (default `False`): when `False`, returns as soon as the run is queued (status `"running"` or queued). When `True`, blocks via [`runs.wait`](#runswait) and returns the terminal run.
@@ -203,7 +203,7 @@ You drive it one of two ways. Pass **`eval_set=<id>`** to run against an existin
 
 ```python
 # Against an existing set
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1", "contract-kie-2"], wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], wait=True)
 ```
 
 <a id="inline-create"></a>
@@ -213,19 +213,19 @@ run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1", "cont
 run = pa.evals.runs.create(
     task="contract-key-fields",
     items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
-    models=["contract-kie-1", "contract-kie-2"],
+    models=["auto"],
     frontier="benchmarked",
     wait=True,
 )
 ```
 
-**Metering.** Each run is metered: the org balance is debited for the compute across **open and frontier** models. If the balance cannot cover the run, `create` raises `InsufficientCreditsError` (402) before any work is billed. Top-up is browser-only; the SDK never exposes balance or payment methods.
+**Metering.** Each run is metered: the org balance is debited for the compute across **auto and frontier** candidates. If the balance cannot cover the run, `create` raises `InsufficientCreditsError` (402) before any work is billed. Top-up is browser-only; the SDK never exposes balance or payment methods.
 
 ```python
 from pareta import InsufficientCreditsError
 
 try:
-    run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"],
+    run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"],
                                frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     raise SystemExit("Out of credit. Top up in the dashboard (billing is browser-only).")
@@ -237,24 +237,24 @@ Returns an [`EvalRun`](#evalrun).
 
 #### `frontier=` resolution
 
-`frontier=` controls which vendor models get scored alongside your open candidates, so the report shows exactly how much quality and cost you are trading. The SDK resolves the keyword to a concrete list of ids before sending the run:
+`frontier=` controls which vendor models get scored alongside `"auto"`, so the report shows exactly what quality the routing holds and what cost it saves. The SDK resolves the keyword to a concrete list of ids before sending the run:
 
 | `frontier=` | Baselines scored |
 | --- | --- |
-| `None` or `"none"` (default) | none, open candidates only (`[]`) |
+| `None` or `"none"` (default) | none, your `models=` candidates only (`[]`) |
 | `"all"` | every frontier model available for the task |
-| `"benchmarked"` | frontier models on the task's leaderboard (vision-filtered for document tasks) |
-| `["gpt-4o", "claude-..."]` | exactly these frontier ids, passed through as-is |
+| `"benchmarked"` | frontier models benchmarked on the task (vision-filtered for document tasks) |
+| `["gpt-5.5", "claude-..."]` | exactly these frontier ids, passed through as-is |
 
 ```python
-# Open candidates only
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"], frontier="none", wait=True)
+# Auto only, no baselines
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="none", wait=True)
 
 # Everything in the frontier pool for the task
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"], frontier="all", wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="all", wait=True)
 
 # A hand-picked baseline
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"], frontier=["gpt-4o"], wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier=["gpt-5.5"], wait=True)
 ```
 
 The `"all"` and `"benchmarked"` keywords need the task to fetch the roster. When you create inline (`task=...`) the SDK already has it; when you pass `eval_set=...` it looks the task up from the set. If it still cannot resolve a task it raises `ValueError`. An unrecognized keyword (anything other than `"all"` / `"benchmarked"` / `"none"`) raises `ValueError`, and a `frontier` that is not `None`, a list/tuple, or a string raises `TypeError`. An explicit list skips the roster lookup entirely.
@@ -284,21 +284,21 @@ def wait(self, run_id: str, *, poll_interval: float = 3.0, timeout: float = 900.
 Polls `runs.retrieve(run_id)` every `poll_interval` seconds until `run.is_terminal` (status `"completed"` or `"failed"`), then returns the final `EvalRun`. Raises `ParetaError` if `timeout` seconds elapse first. This is exactly what `create(..., wait=True)` calls internally, so you can fire a run and block on it later:
 
 ```python
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"])  # returns immediately
-run = pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=1800.0)           # block on it
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"])   # returns immediately
+run = pa.evals.runs.wait(run.id, poll_interval=5.0, timeout=1800.0)  # block on it
 ```
 
 Or poll on your own schedule without `wait`:
 
 ```python
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"])
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"])
 while not run.is_terminal:
     run = pa.evals.runs.retrieve(run.id)
 ```
 
 ### Reading results
 
-A terminal `EvalRun` carries one [`EvalResult`](#evalresult) per model in `run.results`, plus the bill.
+A terminal `EvalRun` carries one [`EvalResult`](#evalresult) per candidate in `run.results`, plus the bill.
 
 ```python
 run = pa.evals.runs.retrieve(run_id)
@@ -309,7 +309,7 @@ else:
     ranked = sorted(run.results, key=lambda r: r.quality_mean or 0.0, reverse=True)
     for r in ranked:
         cost_per_item = (r.mean_cost_micro_usd or 0) / 1_000_000  # micro-USD to dollars
-        print(f"{r.model_id:24} {r.kind:8} q={r.quality_mean:.3f} "
+        print(f"{r.model_id:24} q={r.quality_mean:.3f} "
               f"[{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]  "
               f"${cost_per_item:.6f}/item  ok={r.n_succeeded} err={r.error_count}")
 
@@ -317,9 +317,9 @@ else:
     print(f"raw micro-USD: {run.cost_micro_usd}")
 ```
 
-Use the confidence interval: two models whose CIs overlap are not meaningfully different on this sample, so add rows before declaring a winner. A high `error_count` on one model usually means malformed output, not a bad model, so inspect before trusting its quality number.
+Use the confidence interval: two candidates whose CIs overlap are not meaningfully different on this sample, so add rows before calling the comparison. A high `error_count` on one candidate usually means malformed output, not a bad model, so inspect before trusting its quality number. When `"auto"` holds the frontier's quality at a fraction of its per-item cost, production is the call you already have: keep sending `model="auto"`.
 
-**On money.** `run.cost` is a `Decimal` in dollars, **floored to whole cents** (the SDK never rounds a charge up), so a sub-cent run reads `Decimal("0.00")`. `run.cost_micro_usd` is the raw integer (`1_000_000` micro-USD = `$1.00`) for exact accounting. Per-item rates like `result.mean_cost_micro_usd` stay in micro-USD on purpose: flooring sub-cent unit rates to whole cents would erase the open-vs-frontier cost gap the eval exists to find. Same convention SDK-wide; see [Errors and metering](exceptions.md).
+**On money.** `run.cost` is a `Decimal` in dollars, **floored to whole cents** (the SDK never rounds a charge up), so a sub-cent run reads `Decimal("0.00")`. `run.cost_micro_usd` is the raw integer (`1_000_000` micro-USD = `$1.00`) for exact accounting. Per-item rates like `result.mean_cost_micro_usd` stay in micro-USD on purpose: flooring sub-cent unit rates to whole cents would erase the auto-vs-frontier cost gap the eval exists to find. Same convention SDK-wide; see [Errors and metering](exceptions.md).
 
 ## `evals.frontier_models`: frontier baseline roster
 
@@ -329,7 +329,7 @@ def frontier_models(self, task: str | None = None) -> list[FrontierModel]
 
 `GET /v1/eval/frontier-models`: the vendor (frontier) models you can evaluate against. Feed the `.id`s into `runs.create(frontier=[...])`.
 
-- `task` (optional): when given, each entry is annotated `benchmarked` (on that task's leaderboard) and the roster is vision-filtered for document tasks. Without a task the full roster comes back unannotated.
+- `task` (optional): when given, each entry is annotated `benchmarked` (it has been benchmarked on that task) and the roster is vision-filtered for document tasks. Without a task the full roster comes back unannotated.
 
 ```python
 roster = pa.evals.frontier_models(task="contract-key-fields")
@@ -339,7 +339,7 @@ for m in roster:
 
 # Pin two benchmarked baselines explicitly
 ids = [m.id for m in roster if m.benchmarked][:2]
-run = pa.evals.runs.create(eval_set=eval_set.id, models=["contract-kie-1"], frontier=ids, wait=True)
+run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier=ids, wait=True)
 ```
 
 Returns a list of [`FrontierModel`](#frontiermodel).
@@ -360,12 +360,12 @@ async def main():
         )
         run = await pa.evals.runs.create(
             eval_set=eval_set.id,
-            models=["contract-kie-1", "contract-kie-2"],
+            models=["auto"],
             frontier="benchmarked",
             wait=True,
         )
         for r in run.results:
-            print(r.model_id, r.kind, r.quality_mean)
+            print(r.model_id, r.quality_mean)
         print("billed", run.cost)
 
 asyncio.run(main())
@@ -399,7 +399,7 @@ From `runs.create`, `runs.retrieve`, `runs.wait`. Wraps the `{"run": {...}, "res
 | `eval_set_id` | `str \| None` | The set evaluated |
 | `status` | `str \| None` | `"running"`, `"evaluating"`, `"completed"`, `"failed"` |
 | `is_terminal` | `bool` | `True` when status is `"completed"` or `"failed"` |
-| `candidate_models` | `list[str]` | Model ids evaluated (open + frontier) |
+| `candidate_models` | `list[str]` | The candidates evaluated (`"auto"` + frontier ids) |
 | `error_detail` | `str \| None` | Error message when `status == "failed"` |
 | `cost` | `Decimal` | Billed total in dollars, floored to cents |
 | `cost_micro_usd` | `int` | Raw total cost in micro-USD (`1_000_000` = `$1.00`) |
@@ -407,12 +407,12 @@ From `runs.create`, `runs.retrieve`, `runs.wait`. Wraps the `{"run": {...}, "res
 
 ### `EvalResult`
 
-One model's aggregate on a run; from `run.results`.
+One candidate's aggregate on a run; from `run.results`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `model_id` | `str \| None` | Per-task alias (open) or vendor id (frontier) |
-| `kind` | `str \| None` | `"open"` or `"frontier"` |
+| `model_id` | `str \| None` | `"auto"`, or a frontier vendor id |
+| `kind` | `str \| None` | `"frontier"` on vendor baseline rows; unset on `"auto"` rows |
 | `quality_mean` | `float \| None` | Mean score in `[0, 1]`, your ranking key |
 | `quality_ci_low` | `float \| None` | 95% CI lower bound |
 | `quality_ci_high` | `float \| None` | 95% CI upper bound |
@@ -429,12 +429,10 @@ A vendor baseline; from `frontier_models`.
 | `id` | `str \| None` | Pass to `runs.create(frontier=[...])` |
 | `vendor` | `str \| None` | `"openai"`, `"anthropic"`, etc. |
 | `vision` | `bool` | `True` if vision-capable |
-| `benchmarked` | `bool` | `True` if on the task's leaderboard (only set when `task=` is given) |
+| `benchmarked` | `bool` | `True` if benchmarked on the task (only set when `task=` is given) |
 
 ## See also
 
-- [`tasks`](./tasks.md): match intent to a task, inspect its schema, pull example rows, read leaderboards.
-- [`models`](./models.md): where per-task open aliases come from and why real ids are hidden.
-- [`endpoints`](./endpoints.md): deploy the winning model to a live endpoint (task + model only; no hardware knob).
-- [`chat`](./chat.md): the OpenAI-compatible inference surface, metered the same way evals are.
+- [`tasks`](./tasks.md): match intent to a task, inspect its schema, pull example rows.
+- [`chat`](./chat.md): the OpenAI-compatible inference surface, metered the same way evals are — production is the same `model="auto"` call you just benchmarked.
 - [Errors and metering](exceptions.md): `InsufficientCreditsError`, the money convention, and the full exception hierarchy.

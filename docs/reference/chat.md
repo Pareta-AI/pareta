@@ -1,13 +1,13 @@
 # chat.completions
 
-Run inference against a deployed endpoint. `chat.completions.create(...)` is the one call you make to get tokens out of a model you deployed on Pareta. It has the same shape as the OpenAI chat completions API: pass a `model`, a list of `messages`, and you get a `ChatCompletion` back. Set `stream=True` and you get an iterator of token deltas instead.
+Run inference on Pareta. `chat.completions.create(...)` is the one call you make to get tokens out. It has the same shape as the OpenAI chat completions API: pass `model="auto"`, a list of `messages`, and you get a `ChatCompletion` back. Set `stream=True` and you get an iterator of token deltas instead.
 
-Inference on Pareta is OpenAI-compatible on the wire (vLLM-style SSE), so this exact surface works whether you call it through this SDK, the `openai` package, or raw HTTP. This SDK's added value is the control plane around it (deploy, eval, discover); for plain inference the clients are interchangeable.
+Inference on Pareta is OpenAI-compatible on the wire (vLLM-style SSE), so this exact surface works whether you call it through this SDK, the `openai` package, or raw HTTP. This SDK's added value is the control plane around it (evals, catalog match, auto metrics); for plain inference the clients are interchangeable.
 
 Two platform truths shape this page:
 
-- **Models are per-task aliases, and GPUs are hidden.** The `model` you pass is an endpoint id from [`endpoints.deploy(...)`](./endpoints.md), or any callable model id your org can reach. Real open-weights model ids never cross to you, and you never pick a GPU, quantization, or tensor-parallel setting. The backend resolves all of that.
-- **Inference is metered against your org balance.** A successful completion debits your balance in dollars. If the balance is empty, the call raises [`InsufficientCreditsError`](exceptions.md) (402). Top-up is browser-only; the SDK exposes no balance or payment surface.
+- **There is no model to pick, and GPUs are hidden.** The `model` you pass is the literal string `"auto"` — Pareta plans each request, routes it to benchmark-proven open specialists, verifies, and falls back to a frontier model when that's the right call. Open-weights model ids never cross to you, and you never pick a GPU, quantization, or tensor-parallel setting. The backend resolves all of that.
+- **Inference is metered against your org balance.** A successful completion debits your balance in dollars — one debit per request, no matter how many internal model calls auto's plan makes. If the balance is empty, the call raises [`InsufficientCreditsError`](exceptions.md) (402). Top-up is browser-only; the SDK exposes no balance or payment surface.
 
 **Route:** `POST /v1/chat/completions`
 
@@ -29,7 +29,7 @@ All arguments are keyword-only.
 
 | Parameter | Type | Default | Notes |
 |-----------|------|---------|-------|
-| `model` | `str` | required | `"auto"` (the routing brain — the recommended default), an endpoint id from [`endpoints.deploy(...)`](./endpoints.md), an id from [`models.list()`](./models.md), or a per-task alias. Validated server-side at call time. |
+| `model` | `str` | required | The literal string `"auto"` — the routing brain, and the only model id. Validated server-side at call time. |
 | `messages` | `list[dict]` | required | Non-empty list of OpenAI-format message dicts (`{"role": ..., "content": ...}`). |
 | `stream` | `bool` | `False` | `False` returns a `ChatCompletion`; `True` returns an iterator of `ChatCompletionChunk`. |
 | `**kwargs` | `Any` | — | Any extra OpenAI body field (`temperature`, `max_tokens`, `top_p`, `stop`, `seed`, ...) passes through unchanged. |
@@ -43,7 +43,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:   # reads PARETA_API_KEY (+ optional PARETA_BASE_URL)
     resp = pa.chat.completions.create(
-        model="auto",                # the routing brain (or a dedicated endpoint id)
+        model="auto",                # the routing brain — the only model id
         messages=[
             {"role": "system", "content": "You extract structured fields from documents."},
             {"role": "user", "content": "What is the invoice total?\n\nINVOICE\nTotal due: $4,210.00"},
@@ -58,14 +58,11 @@ with Pareta.from_env() as pa:   # reads PARETA_API_KEY (+ optional PARETA_BASE_U
 
 ### Where `model` comes from
 
-Four interchangeable sources:
-
-- **`"auto"` — the routing brain, the recommended default.** Pareta plans the
-  request, routes it to benchmark-proven open specialists, verifies, and falls
-  back to a frontier model when that's the right call. Nothing to deploy.
-- An endpoint id you deployed. See [`endpoints.deploy`](./endpoints.md).
-- Any id returned by [`models.list()`](./models.md) (your deployed, callable endpoints).
-- A per-task model alias. The deployable recommended pick for a task is `pa.tasks.recommended(task_id)`; see [`tasks`](./tasks.md).
+One place: `model` is always the literal string `"auto"`. Pareta plans the
+request, routes it to benchmark-proven open specialists, verifies, and falls
+back to a frontier model when that's the right call. Nothing to deploy, no
+menu to pick from — [`models.list()`](./models.md) confirms it by returning
+the single `"auto"` entry.
 
 ## Return type: ChatCompletion
 
@@ -73,7 +70,7 @@ With `stream=False` (the default), `create(...)` returns a `ChatCompletion`. Fie
 
 ```python
 resp.id                            # str | None
-resp.model                         # str | None — the alias that served the call
+resp.model                         # str | None — echoes "auto"
 resp.created                       # int | None — Unix timestamp
 resp.choices                       # list[Choice]
 resp.choices[0].index              # int | None
@@ -175,17 +172,17 @@ The async return type is `ChatCompletion | AsyncIterator[ChatCompletionChunk]`. 
 
 ## Metering
 
-Every successful completion (streaming or not) debits your org balance. The `chat.completions` surface does not return a per-call cost field; spend is summarized per endpoint via [`endpoints.metrics(...).cost(...)`](./endpoints.md). If the org balance is empty, the call raises `InsufficientCreditsError` (402, a subclass of `ParetaError`). Top up in the dashboard; billing is browser-only and the SDK has no balance or payment surface.
+Every successful completion (streaming or not) debits your org balance — one debit per request, however many internal model calls auto's plan makes; orchestration overhead is Pareta's cost, not yours. The `chat.completions` surface does not return a per-call cost field; spend is rolled up org-wide via `pa.auto.metrics()` (see [Cost & quality monitoring](../examples/cost-and-metrics.md)). If the org balance is empty, the call raises `InsufficientCreditsError` (402, a subclass of `ParetaError`). Top up in the dashboard; billing is browser-only and the SDK has no balance or payment surface.
 
 ## Errors
 
-`create(...)` raises specific subclasses of `ParetaError`. A single `except ParetaError` is a fine catch-all; the named classes let you branch. The two cases specific to running inference are an empty balance and a not-ready endpoint:
+`create(...)` raises specific subclasses of `ParetaError`. A single `except ParetaError` is a fine catch-all; the named classes let you branch. The two cases specific to running inference are an empty balance and a warming backend:
 
 ```python
 from pareta import (
     Pareta,
     InsufficientCreditsError,   # 402: org balance empty
-    EndpointNotReadyError,      # 503: endpoint stopped / cold / provider down
+    EndpointNotReadyError,      # 503: a serving backend is warming / briefly unavailable
 )
 
 with Pareta.from_env() as pa:
@@ -199,9 +196,9 @@ with Pareta.from_env() as pa:
         # Balance hit zero. Top up in the dashboard (billing is browser-only).
         print("Out of credit — top up in the dashboard, then retry.")
     except EndpointNotReadyError:
-        # The endpoint is stopped or cold-starting. Start it, wait for live, retry.
-        pa.endpoints.start("ep_invoice_xtract")
-        print("Endpoint was not ready — started it; retry shortly.")
+        # A serving backend behind auto is warming. The SDK already retried
+        # the 503 with backoff; wait briefly and retry the call.
+        print("Backend warming — retry shortly.")
 ```
 
 | Raised | Status | When |
@@ -210,10 +207,10 @@ with Pareta.from_env() as pa:
 | `BadRequestError` | 400 / 422 | Malformed request or unsupported passthrough field |
 | `AuthenticationError` | 401 | Invalid or missing API key |
 | `InsufficientCreditsError` | 402 | Org balance empty |
-| `PermissionDeniedError` | 403 | Caller lacks permission for the endpoint |
-| `NotFoundError` | 404 | `model` is not a callable endpoint or model id |
+| `PermissionDeniedError` | 403 | Caller lacks permission |
+| `NotFoundError` | 404 | `model` is not a recognized model id (send `"auto"`) |
 | `RateLimitError` | 429 | Rate limited (after retries) |
-| `EndpointNotReadyError` | 503 | Endpoint stopped, cold-starting, or provider down |
+| `EndpointNotReadyError` | 503 | A serving backend behind `auto` is warming or briefly unavailable (after retries) |
 | `APITimeoutError` | — | No response within the client timeout (after retries) |
 | `APIConnectionError` | — | DNS, TCP, or TLS failure |
 
@@ -225,7 +222,7 @@ Transient failures (408, 409, 429, 500, 502, 503, 504) are retried automatically
 
 ## Using the OpenAI SDK instead
 
-Because the endpoint is OpenAI-compatible, you do not need this SDK to call it. Point the `openai` client at Pareta's base URL with your `pareta_sk_` key. Note the `/v1` suffix the OpenAI client expects:
+Because Pareta is one OpenAI-compatible endpoint, you do not need this SDK to call it. Point the `openai` client at Pareta's base URL with your `pareta_sk_` key. Note the `/v1` suffix the OpenAI client expects:
 
 ```python
 from openai import OpenAI
@@ -239,12 +236,11 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
-Streaming, `temperature`, `max_tokens`, and the rest work exactly as they do against OpenAI. Metering still applies; a zero balance returns a 402, which the `openai` client surfaces as its own status error. Reach for the Pareta SDK when you want the control plane: [deploying endpoints](./endpoints.md), [discovering tasks](./tasks.md), and [running evals](./evals.md).
+Streaming, `temperature`, `max_tokens`, and the rest work exactly as they do against OpenAI. Metering still applies; a zero balance returns a 402, which the `openai` client surfaces as its own status error. Reach for the Pareta SDK when you want typed errors and the control plane: [matching intent to the catalog](./tasks.md) and [running evals](./evals.md).
 
 ## See also
 
-- [`models`](./models.md) — list the callable endpoint ids you can pass as `model`.
-- [`endpoints`](./endpoints.md) — deploy, start, stop, and read cost metrics for the endpoint you infer against.
-- [`tasks`](./tasks.md) — discover tasks and the recommended deployable model for each.
-- [`evals`](./evals.md) — evaluate candidate models on your own data before deploying.
+- [`models`](./models.md) — the OpenAI-compatible model list: the single `"auto"` entry.
+- [`tasks`](./tasks.md) — browse and match the catalog of tasks auto routes across.
+- [`evals`](./evals.md) — benchmark `"auto"` against frontier baselines on your own data.
 - [Errors](exceptions.md) — the full exception hierarchy and retry policy.

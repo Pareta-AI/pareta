@@ -11,6 +11,7 @@ import json
 import os
 import random
 import time
+import uuid
 from typing import Any, Iterator, AsyncIterator
 
 import httpx
@@ -24,7 +25,10 @@ from ._exceptions import (
 from ._version import __version__
 
 DEFAULT_BASE_URL = "https://api.pareta.ai"
-DEFAULT_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+# #174: long-doc auto requests legitimately run 60-180s server-side. A 60s
+# read-timeout made the SDK kill + retry them mid-flight; 600s matches the
+# OpenAI SDK default and the proxy's own upstream client.
+DEFAULT_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 DEFAULT_MAX_RETRIES = 2
 _RETRY_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504})
 # 409 here is the transient lock/contention class some backends emit; Pareta's
@@ -119,37 +123,12 @@ class _BaseClient:
             except (json.JSONDecodeError, ValueError):
                 continue
 
-    @staticmethod
-    def _iter_sse_typed(lines: Iterator[str]) -> Iterator[dict]:
-        """Named-event SSE (deploy progress stream): track the `event:` line and
-        yield {"event": <type>, "data": <parsed json or raw str>} per event."""
-        event = "message"
-        for line in lines:
-            line = line.rstrip("\n")
-            if not line:
-                event = "message"      # blank line terminates one event
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event = line[len("event:"):].strip()
-            elif line.startswith("data:"):
-                raw = line[len("data:"):].strip()
-                if raw == "[DONE]":
-                    return
-                try:
-                    data = json.loads(raw)
-                except (json.JSONDecodeError, ValueError):
-                    data = raw
-                yield {"event": event, "data": data}
-
-
 class Pareta(_BaseClient):
     """Synchronous Pareta client.
 
     >>> pa = Pareta(api_key="pareta_sk_…")          # or Pareta.from_env()
     >>> pa.chat.completions.create(model="auto", messages=[...])
-    >>> pa.models.list()                            # dedicated endpoints, if any
+    >>> pa.evals.runs.create(...)                   # prove auto on your data
     """
 
     def __init__(
@@ -167,7 +146,6 @@ class Pareta(_BaseClient):
         # Resource namespaces (imported here to avoid a circular import).
         from .resources.chat import Chat
         from .resources.models import Models
-        from .resources.endpoints import Endpoints
         from .resources.tasks import Tasks
         from .resources.evals import Evals
         from .resources.audio import Audio
@@ -175,7 +153,6 @@ class Pareta(_BaseClient):
 
         self.chat = Chat(self)
         self.models = Models(self)
-        self.endpoints = Endpoints(self)
         self.tasks = Tasks(self)
         self.evals = Evals(self)
         self.audio = Audio(self)
@@ -206,6 +183,11 @@ class Pareta(_BaseClient):
         url = f"{self.base_url}{path}"
         is_multipart = files is not None or data is not None
         headers = self._headers(json_body=(body is not None and not is_multipart))
+        # #174: ONE idempotency key per logical call, resent verbatim on every
+        # auto-retry — the server collapses all attempts onto a single ledger
+        # debit (a long-doc request can outlive a client timeout yet complete).
+        if method.upper() == "POST":
+            headers.setdefault("Idempotency-Key", f"pareta-py-{uuid.uuid4().hex}")
         kwargs = {"params": params, "headers": headers}
         if is_multipart:
             kwargs["files"] = files
@@ -233,13 +215,14 @@ class Pareta(_BaseClient):
                 time.sleep(self._backoff(attempt, None))
         raise last_exc  # type: ignore[misc]
 
-    def stream(self, method: str, path: str, *, body=None, params=None, cast=None, events=False) -> Iterator:
+    def stream(self, method: str, path: str, *, body=None, params=None, cast=None) -> Iterator:
         """Yield parsed SSE objects. Retries only the initial connect/handshake;
-        once bytes are flowing a mid-stream drop raises (can't safely resume).
-        events=True yields typed {"event","data"} dicts (deploy); else data-only."""
+        once bytes are flowing a mid-stream drop raises (can't safely resume)."""
         url = f"{self.base_url}{path}"
         headers = self._headers(stream=True, json_body=body is not None)
-        parse = self._iter_sse_typed if events else self._iter_sse_json
+        # #174: stable key across handshake retries (see request()).
+        if method.upper() == "POST":
+            headers.setdefault("Idempotency-Key", f"pareta-py-{uuid.uuid4().hex}")
         for attempt in range(self.max_retries + 1):
             started = False   # set once a 2xx body is flowing — no safe retry past here
             try:
@@ -251,12 +234,12 @@ class Pareta(_BaseClient):
                             continue
                         raise self._parse_error(resp)
                     started = True
-                    for obj in parse(resp.iter_lines()):
-                        yield obj if events else (cast(obj) if cast else obj)
+                    for obj in self._iter_sse_json(resp.iter_lines()):
+                        yield cast(obj) if cast else obj
                     return
             except httpx.TimeoutException as e:
                 # A mid-stream drop must NOT re-issue the request (would re-run a
-                # generation / re-trigger a deploy). Only the connect/handshake retries.
+                # generation). Only the connect/handshake retries.
                 if started or attempt >= self.max_retries:
                     raise APITimeoutError(cause=e)
                 time.sleep(self._backoff(attempt, None))
@@ -283,7 +266,6 @@ class AsyncPareta(_BaseClient):
         self._owns_http = http_client is None
         from .resources.chat import AsyncChat
         from .resources.models import AsyncModels
-        from .resources.endpoints import AsyncEndpoints
         from .resources.tasks import AsyncTasks
         from .resources.evals import AsyncEvals
         from .resources.audio import AsyncAudio
@@ -291,7 +273,6 @@ class AsyncPareta(_BaseClient):
 
         self.chat = AsyncChat(self)
         self.models = AsyncModels(self)
-        self.endpoints = AsyncEndpoints(self)
         self.tasks = AsyncTasks(self)
         self.evals = AsyncEvals(self)
         self.audio = AsyncAudio(self)
@@ -321,6 +302,11 @@ class AsyncPareta(_BaseClient):
         url = f"{self.base_url}{path}"
         is_multipart = files is not None or data is not None
         headers = self._headers(json_body=(body is not None and not is_multipart))
+        # #174: ONE idempotency key per logical call, resent verbatim on every
+        # auto-retry — the server collapses all attempts onto a single ledger
+        # debit (a long-doc request can outlive a client timeout yet complete).
+        if method.upper() == "POST":
+            headers.setdefault("Idempotency-Key", f"pareta-py-{uuid.uuid4().hex}")
         kwargs = {"params": params, "headers": headers}
         if is_multipart:
             kwargs["files"] = files
@@ -348,12 +334,14 @@ class AsyncPareta(_BaseClient):
                 await asyncio.sleep(self._backoff(attempt, None))
         raise last_exc  # type: ignore[misc]
 
-    async def stream(self, method: str, path: str, *, body=None, params=None, cast=None, events=False) -> AsyncIterator:
+    async def stream(self, method: str, path: str, *, body=None, params=None, cast=None) -> AsyncIterator:
         import asyncio
 
         url = f"{self.base_url}{path}"
         headers = self._headers(stream=True, json_body=body is not None)
-        parse = self._iter_sse_typed if events else self._iter_sse_json
+        # #174: stable key across handshake retries (see request()).
+        if method.upper() == "POST":
+            headers.setdefault("Idempotency-Key", f"pareta-py-{uuid.uuid4().hex}")
         for attempt in range(self.max_retries + 1):
             started = False   # set once a 2xx body is flowing — no safe retry past here
             try:
@@ -366,8 +354,8 @@ class AsyncPareta(_BaseClient):
                         raise self._parse_error(resp)
                     started = True
                     lines = [line async for line in resp.aiter_lines()]
-                    for obj in parse(iter(lines)):
-                        yield obj if events else (cast(obj) if cast else obj)
+                    for obj in self._iter_sse_json(iter(lines)):
+                        yield cast(obj) if cast else obj
                     return
             except httpx.TimeoutException as e:
                 if started or attempt >= self.max_retries:

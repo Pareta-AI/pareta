@@ -1,7 +1,8 @@
-"""`client.models` — list the deployed models (endpoints) your org can call.
+"""`client.models` — list the models your org can call.
 
-OpenAI-compatible: only deployed, url-bearing endpoints appear. Each `Model.id`
-is an endpoint id usable as `chat.completions.create(model=…)`.
+OpenAI-compatible. Each `Model.id` is usable as
+`chat.completions.create(model=…)`, though `model="auto"` — the routing
+brain — is the recommended surface.
 """
 
 from __future__ import annotations

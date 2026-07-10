@@ -1,28 +1,26 @@
 # tasks
 
-`client.tasks` is the catalog layer. Before you deploy or evaluate anything you
-need two things: a **task** (which benchmark you are solving) and a **model**
-(which model to deploy or measure). `tasks` resolves both for you:
+`client.tasks` is the catalog layer: the benchmarked jobs `model="auto"` routes
+across. You never pick a model — "which model?" is the question auto answers
+per request — but the catalog is how you ask, before sending traffic, whether
+Pareta covers your job at all:
 
+- `match` is the "can Pareta do X?" surface: it turns a plain-English
+  description of your job into an answer — a benchmarked task, a general
+  capability lane, or `"unsupported"`.
 - `list` / `retrieve` browse the benchmark catalog and a task's schema.
-- `match` turns a plain-English description of your job into ranked candidate
-  tasks.
-- `leaderboard` / `recommended` rank the models scored on a task and hand you the
-  deployable pick.
 
 Two platform facts run through everything here:
 
-- **Models are per-task aliases.** Leaderboard rows, the `recommended` pick, and
-  eval result `model_id`s are public aliases like `qwen-1` or `recommended`,
-  never the underlying open-weights ids. You pass the alias straight back into
-  [`endpoints.deploy(model=...)`](./endpoints.md) or
-  [`evals.runs.create(models=[...])`](./evals.md), and Pareta resolves the real
-  model and the hardware. There is no GPU, quantization, or run-mode knob
-  anywhere in this flow.
-- **Catalog reads are free.** `list`, `retrieve`, `match`, `leaderboard`, and
-  `recommended` are not metered. The meter only starts when you run compute
-  (inference and eval runs), which is debited against your org balance. See
-  [Errors](exceptions.md) for `InsufficientCreditsError`.
+- **Task ids feed evals, not inference.** Inference is always
+  `chat.completions.create(model="auto", ...)`; it takes no task id. A matched
+  task id like `"contract-key-fields"` is what you hand to
+  [`evals.runs.create(task=...)`](./evals.md) to prove auto against the
+  frontier on your own rows.
+- **Catalog reads are free.** `list`, `retrieve`, and `match` are not metered.
+  The meter only starts when you run compute (inference and eval runs), which
+  is debited against your org balance. See [Errors](exceptions.md) for
+  `InsufficientCreditsError`.
 
 All snippets assume:
 
@@ -91,6 +89,10 @@ if match.ambiguous:
 task_id = match.chosen.task_id
 ```
 
+A matched `task_id` goes to [`evals.runs.create(task=task_id, ...)`](./evals.md)
+to prove auto on your own rows; inference itself stays `model="auto"` — there is
+nothing to switch once you know the job is covered.
+
 ---
 
 ## tasks.retrieve
@@ -141,81 +143,10 @@ for task in pa.tasks.list():
 
 ---
 
-## tasks.leaderboard
-
-```python
-def leaderboard(self, task_id: str) -> Leaderboard
-```
-
-**Route:** `GET /v1/tasks/{task_id}/leaderboard`
-
-Returns the models scored on a task, ranked by quality, with each model's
-per-request cost. This is how you choose between open models and read, concretely,
-how far below the frontier the cost sits.
-
-Returns a [`Leaderboard`](#leaderboard).
-
-```python
-board = pa.tasks.leaderboard(task_id)
-
-print(f"metric={board.metric}  cost_unit={board.cost_unit}")
-print(f"recommended: {board.recommended}")
-
-for entry in board.models:
-    cost = entry.cost_per_request_micro_usd or 0
-    print(f"  {entry.name:<16} {entry.kind:<8} "
-          f"quality={entry.quality:.3f}  "
-          f"${cost / 1_000_000:.6f}/req  ctx={entry.context_k}k")
-
-if board.frontier:
-    f = board.frontier
-    print(f"frontier baseline: {f.name}  quality={f.quality:.3f}  "
-          f"${(f.cost_per_request_micro_usd or 0) / 1_000_000:.6f}/req")
-```
-
-`board.recommended` is exactly what `endpoints.deploy(model="recommended")`
-resolves to: the curated pick, or the top-ranked open model if there is no
-curated one. Pass it straight to `deploy(model=...)`.
-
-> **Cost is in micro-USD here, on purpose.** Per-request rates are sub-cent, so
-> the leaderboard keeps the raw `cost_per_request_micro_usd` integer
-> (1,000,000 micro-USD = $1.00). Flooring to whole cents, which is how billed
-> **totals** like `run.cost` behave (see [evals](./evals.md)), would erase the
-> open-vs-frontier comparison. Divide by 1,000,000 to display dollars.
-
----
-
-## tasks.recommended
-
-```python
-def recommended(self, task_id: str) -> str | None
-```
-
-Convenience wrapper over `leaderboard(task_id).recommended`. Returns the
-deployable model alias Pareta recommends for the task (or `None` if the task has
-no ranked models yet).
-
-```python
-model = pa.tasks.recommended(task_id)        # e.g. "qwen-1" or "recommended"
-ep = pa.endpoints.deploy(task=task_id, model=model, wait=True)
-print(ep.id, ep.status)
-```
-
-Passing `model="recommended"` to `deploy` does the same resolution server-side,
-so `recommended` is mainly useful when you want to **see** the pick (log it, show
-it, gate on it) before committing to a deploy.
-
-> **Sync only, for now.** `leaderboard` and `recommended` live on the sync `Tasks`
-> resource. `AsyncTasks` has `list`, `retrieve`, and `match`; the ranking methods
-> land for async in a later slice. From async code, either call them on a
-> short-lived sync `Pareta` or run them in a thread.
-
----
-
 ## A full discovery pass
 
-End to end: intent in, recommended open model plus the frontier gap out, ready to
-hand to a deploy or an eval.
+End to end: intent in, a benchmarked task out, proven on your own rows — while
+inference stays `model="auto"` throughout.
 
 ```python
 from pareta import Pareta
@@ -232,26 +163,29 @@ task_id = match.chosen.task_id
 task = pa.tasks.retrieve(task_id)
 print(f"task={task.id}  scorer={task.default_scorer}  blob={task.has_blob_input}")
 
-# 3. task -> recommended open model + the open-vs-frontier quality gap
-board = pa.tasks.leaderboard(task_id)
-pick = board.recommended
-frontier_q = board.frontier.quality if board.frontier else None
-print(f"recommend={pick}  frontier_quality={frontier_q}")
+# 3. prove it: benchmark "auto" against the frontier on your own rows
+run = pa.evals.runs.create(
+    task=task_id,
+    items=[{"input": "…", "expected": {"effective_date": "2026-01-01"}}],
+    models=["auto"],
+    frontier="benchmarked",
+    wait=True,
+)
+print("billed:", run.cost)
 
-# now: deploy `pick` (endpoints.deploy), or eval it vs the frontier on your data.
+# production is the same call you started with: model="auto"
 ```
 
-From here you either deploy the recommended model
-([endpoints](./endpoints.md)) or run it head to head against the frontier on your
-own data ([evals](./evals.md)). To pick the vendor baselines to measure against,
-see `evals.frontier_models` in [evals](./evals.md).
+There is nothing to switch on at the end of this pass: production traffic is
+the same `chat.completions.create(model="auto", ...)` call, and the eval is the
+proof it holds up on your data. To pick the vendor baselines to measure
+against, see `evals.frontier_models` in [evals](./evals.md).
 
 ---
 
 ## Async
 
-`AsyncTasks` mirrors the sync surface for the catalog reads. Every method is
-`async def` and awaited:
+`AsyncTasks` mirrors the sync surface. Every method is `async def` and awaited:
 
 ```python
 import asyncio
@@ -271,9 +205,7 @@ async def main():
 asyncio.run(main())
 ```
 
-`AsyncTasks` does **not** expose `leaderboard` or `recommended` yet. Call those on
-a sync `Pareta` (they are non-blocking catalog reads) or run them in a thread. See
-the [async guide](../guide/async.md) for the full sync-vs-async story.
+See the [async guide](../guide/async.md) for the full sync-vs-async story.
 
 ---
 
@@ -320,32 +252,7 @@ See [`Capability`](types.md#capability) for the capability lane fields (`id`,
 | `score` | `float \| None` | Match score in `[0, 1]` |
 | `confidence` | `str \| None` | `"high"`, `"medium"`, or `"low"` |
 
-### Leaderboard
-
-From `GET /v1/tasks/{id}/leaderboard`.
-
-| Field | Type | Notes |
-|---|---|---|
-| `task_id` | `str \| None` | The task this board ranks |
-| `metric` | `str \| None` | What `quality` measures, e.g. `"quality"` |
-| `cost_unit` | `str \| None` | Cost unit, e.g. `"per_request"` |
-| `recommended` | `str \| None` | The deployable model alias to pass to `deploy(model=...)` |
-| `models` | `list[LeaderboardEntry]` | The ranked entries |
-| `frontier` | `LeaderboardEntry \| None` | The vendor baseline this task is measured against |
-
-### LeaderboardEntry
-
-| Field | Type | Notes |
-|---|---|---|
-| `name` | `str \| None` | Model name / alias |
-| `kind` | `str \| None` | `"open"` or `"frontier"` |
-| `quality` | `float \| None` | Quality score in `[0, 1]` |
-| `cost_per_request_micro_usd` | `int \| None` | Raw unit cost in micro-USD (not floored) |
-| `context_k` | `int \| None` | Context window in thousands of tokens |
-| `run_mode` | `str \| None` | Backend-provided context (`"rte"` / `"twostage"`); not a user knob |
-
 ---
 
-See also: [endpoints](./endpoints.md) · [evals](./evals.md) ·
-[inference](../guide/inference.md) · [errors](exceptions.md) ·
-[discovery guide](../guide/discovery.md)
+See also: [evals](./evals.md) · [inference](../guide/inference.md) ·
+[errors](exceptions.md) · [core concepts](../guide/core-concepts.md)

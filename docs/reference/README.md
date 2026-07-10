@@ -1,6 +1,6 @@
 # Reference
 
-Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the **TypeScript** SDK mirrors them (a single Promise-only `Pareta` client, camelCase names, `await`ed calls). Everything hangs off one client object, `Pareta` (Python also ships an async mirror, `AsyncPareta`); the resource pages document the namespaces that live on it. Conventions that hold everywhere: model ids you pass and read are per-task aliases, inference and evals are metered against your org balance, and money appears on `.cost` (a dollars `Decimal` in Python, a fixed-2dp string in TypeScript) with the raw integer on `.cost_micro_usd` / `.costMicroUsd`.
+Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the **TypeScript** SDK mirrors them (a single Promise-only `Pareta` client, camelCase names, `await`ed calls). Everything hangs off one client object, `Pareta` (Python also ships an async mirror, `AsyncPareta`); the resource pages document the namespaces that live on it. Conventions that hold everywhere: the model id you pass for inference is `"auto"` (frontier vendor ids appear only in eval and comparison contexts), inference and evals are metered against your org balance, and money appears on `.cost` (a dollars `Decimal` in Python, a fixed-2dp string in TypeScript) with the raw integer on `.cost_micro_usd` / `.costMicroUsd`.
 
 ## Client
 
@@ -9,20 +9,19 @@ Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the 
 ## Resources
 
 - [chat.completions](./chat.md) — `chat.completions.create`: params, `ChatCompletion`/chunk return types, streaming SSE behavior, metering, and the full error/retry surface, with sync, async, and OpenAI-SDK examples.
-- [models](./models.md) — `client.models`: `list()` returns a `ModelList` of callable deployed endpoints; the three `Model` fields (`id`/`owned_by`/`created`), sync+async usage, and how it differs from `endpoints.list()`.
-- [endpoints](./endpoints.md) — `client.endpoints`: `deploy` (wait semantics + progress-event SSE), `list`/`retrieve`/`start`/`stop`/`delete`, the `Endpoint` object, and `metrics(id)` observability dimensions.
-- [tasks](./tasks.md) — `client.tasks`: `list`/`retrieve`/`match`/`leaderboard`/`recommended` with the `Task`/`TaskMatch`/`Leaderboard` response models.
+- [models](./models.md) — `client.models`: `list()` returns a `ModelList` with exactly one entry, `"auto"`; the three `Model` fields (`id`/`owned_by`/`created`) and sync+async usage.
+- [tasks](./tasks.md) — `client.tasks`: `list`/`retrieve`/`match` with the `Task`/`TaskMatch` response models.
 - [evals](./evals.md) — `client.evals`: `sets`, `runs`, and `frontier_models`, with `frontier=` resolution, metering, and response-object tables.
 - [audio](./audio.md) — `client.audio`: `transcriptions` (speech-to-text) and `speech` (text-to-speech), the per-minute metering, and the `Transcription`/`Speech` response objects.
 
 ## Types and errors
 
 - [Exceptions](./exceptions.md) — the exception hierarchy: `ParetaError` base, status-to-class mapping, and the `status_code`/`detail`/`request_id` attributes.
-- [Response types](./types.md) — every response object (chat, models, endpoints, tasks, evals) plus the `.cost` vs `.cost_micro_usd` money convention.
+- [Response types](./types.md) — every response object (chat, models, tasks, evals) plus the `.cost` vs `.cost_micro_usd` money convention.
 
 ## Transport
 
-- [Underlying HTTP API](./http-api.md) — a per-method map of the `/v1` routes the SDK wraps (chat/completions, models, endpoints+metrics, tasks+match/leaderboard, eval frontier-models, eval-sets, eval-runs) with method, path, Bearer auth, request/response shapes, and sync/async + curl examples.
+- [Underlying HTTP API](./http-api.md) — a per-method map of the `/v1` routes the SDK wraps (chat/completions, models, tasks+match, auto metrics + frontier compare, eval frontier-models, eval-sets, eval-runs) with method, path, Bearer auth, request/response shapes, and sync/async + curl examples.
 
 ## See also
 

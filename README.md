@@ -74,24 +74,22 @@ resp = client.chat.completions.create(model="auto", messages=[...])
 ```
 
 This SDK's unique value is everything AROUND that call — evals on your data,
-auto metrics, the benchmark catalog, and the dedicated-endpoint control plane —
-as Python methods, a CLI, and an MCP server.
+auto metrics, and the benchmark catalog — as Python methods, a CLI, and an
+MCP server.
 
-## Dedicated endpoints (when you want to pin one model)
+## Discovery
 
-`"auto"` routes per request. When a workload wants one specific open model on
-dedicated capacity, deploy it and call it by endpoint id:
+`pa.tasks.match` resolves a plain-language intent to the benchmarked task (or
+capability lane) Pareta covers it with — feed the matched task into `pa.evals`
+to prove `"auto"` on your own data:
 
 ```python
-ep = pa.endpoints.deploy(task="invoice-extraction", model="recommended", wait=True)
-resp = pa.chat.completions.create(model=ep.id, messages=[...])
+m = pa.tasks.match("extract the key fields from these contracts")
+m.type, m.chosen.task_id                     # "task", "contract-key-fields"
 
-for m in pa.models.list():                   # everything your org can call
-    print(m.id)
+for model in pa.models.list():               # everything your org can call
+    print(model.id)
 ```
-
-Discovery (`pa.tasks.match`, `pa.tasks.leaderboard`) tells you which open
-models are benchmark-proven for your task and what the frontier baseline costs.
 
 ## Auth
 
@@ -112,22 +110,21 @@ pareta auto metrics                                     # your auto traffic, rol
 pareta auto compare "…prompt…" --frontier gpt-5.5       # auto vs a frontier, metered
 
 pareta tasks match "extract fields from invoices"       # intent → task
-pareta tasks leaderboard invoice-extraction             # ranked open models + savings
-pareta endpoints deploy --task invoice-extraction --wait
-pareta chat -m ep_… "…"                                 # pin a dedicated endpoint
+pareta evals run --task invoice-extraction --file rows.jsonl \
+  --models auto --frontier --wait                       # prove auto on your data
 ```
 
 Add `--json` to any command for machine-readable output; `pareta --help` (or
 `pareta <group> --help`) documents the full tree — `chat`, `auto`, `tasks`,
-`models`, `endpoints`, `evals`, `audio`.
+`models`, `evals`, `audio`.
 
 ## MCP server
 
 `pareta-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
 server (stdio) that exposes Pareta to an AI agent (Claude Desktop, Cursor, …) as
 tools — `chat` (defaults to `model="auto"`), `auto_metrics`, `compare_frontier`,
-plus discovery (`match_task`, `get_leaderboard`, …), provisioning
-(`deploy_endpoint`, `start` / `stop` / `delete`), and `run_eval`.
+`run_eval` / `get_eval_run`, discovery (`match_task`, `list_tasks`, `get_task`,
+`list_models`), and audio (`transcribe`, `speak`).
 
 Run it in **its own isolated environment** — like any MCP server it has its own
 dependency tree, so don't `pip install` it into an app/project venv. The simplest
@@ -150,7 +147,7 @@ Prefer a persistent install? `pipx install "pareta[mcp]"` puts `pareta-mcp` on
 your PATH in a dedicated venv — then use `"command": "pareta-mcp"`. (Avoid a plain
 `pip install "pareta[mcp]"` into a shared environment: its `mcp`/`starlette`
 dependencies can clash with an app's FastAPI, and the console script may not land
-on your PATH.) Provisioning and inference tools spend money; your MCP client's
+on your PATH.) Inference, eval, and audio tools spend money; your MCP client's
 per-tool-call approval is the guardrail.
 
 ## Errors
@@ -161,8 +158,8 @@ All errors subclass `pareta.ParetaError`:
 |---|---|
 | `AuthenticationError` (401) | bad/missing key |
 | `InsufficientCreditsError` (402) | org out of credit — top up in the dashboard |
-| `NotFoundError` (404) | unknown endpoint |
-| `EndpointNotReadyError` (503) | endpoint stopped / cold / provider down |
+| `NotFoundError` (404) | unknown resource (task, eval set, run, …) |
+| `EndpointNotReadyError` (503) | serving capacity cold / provider down (retryable) |
 | `RateLimitError` (429) | throttled (auto-retried) |
 | `BadRequestError` (400/422) | malformed request |
 | `APIConnectionError` / `APITimeoutError` | transport failure (auto-retried) |
@@ -173,8 +170,7 @@ Idempotent GETs and 429/5xx/timeouts are retried with exponential backoff
 ## Status
 
 Live: `model="auto"` inference (buffered + streaming) with `pa.auto` metrics and
-frontier comparison, plus the full control plane — `models`, `tasks` (browse +
-match), `endpoints` (deploy / operate / metrics), `evals`
+frontier comparison, plus `models`, `tasks` (browse + match), `evals`
 (bring-your-own-data, with `"auto"` as a first-class contender), and `audio` —
 and two interfaces over it: the **`pareta` CLI** (`pip install "pareta[cli]"`)
 and the **`pareta-mcp` MCP server** (`pip install "pareta[mcp]"`). Sync + async

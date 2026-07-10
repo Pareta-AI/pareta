@@ -326,9 +326,9 @@ What is *not* retried:
 
 - **4xx errors other than 408/409/429** — these are your request, not a transient blip. A `402 InsufficientCreditsError`, `401 AuthenticationError`, or `404 NotFoundError` raises on the first attempt.
 - **Connection errors on initial connect** (DNS, TCP, TLS refusal) — raised after the retry budget for the handshake is spent.
-- **Mid-stream drops.** Streaming calls (`chat.completions.create(stream=True)`, `endpoints.deploy()`) retry only the initial handshake. Once SSE bytes are flowing, a drop raises immediately, because a partial stream cannot be safely resumed.
+- **Mid-stream drops.** Streaming calls (`chat.completions.create(stream=True)`) retry only the initial handshake. Once SSE bytes are flowing, a drop raises immediately, because a partial stream cannot be safely resumed.
 
-A `409` is worth a note: it is in the retry set because some backends use it for transient lock contention. Pareta's own stable `409` (for example, a seed or legacy endpoint) simply exhausts the retries and then raises `ConflictError`, so you see the right error either way. See [Errors](errors-and-retries.md).
+A `409` is worth a note: it is in the retry set because some backends use it for transient lock contention. A stable `409` from Pareta simply exhausts the retries and then raises `ConflictError`, so you see the right error either way. See [Errors](errors-and-retries.md).
 
 ## `http_client` (bring your own httpx)
 
@@ -405,7 +405,7 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     completion = pa.chat.completions.create(
-        model="ep_contract_kie_qwen",
+        model="auto",
         messages=[{"role": "user", "content": "Extract the parties."}],
     )
     print(completion.choices[0].message.content)
@@ -421,7 +421,7 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 const completion = await pa.chat.completions.create({
-  model: "ep_contract_kie_qwen",
+  model: "auto",
   messages: [{ role: "user", content: "Extract the parties." }],
 });
 console.log(completion.choices[0].message.content);
@@ -480,12 +480,12 @@ Remember the ownership rule: if you passed `http_client=`, neither `close()` nor
 
 ## Platform truths worth knowing
 
-These hold no matter how you configure the client. They are why there is no GPU knob, no balance API, and no per-environment model catalog to wire up.
+These hold no matter how you configure the client. They are why there is no GPU knob, no balance API, and no model catalog to wire up.
 
-- **GPUs are hidden.** You configure a key, a URL, timeouts, and retries — never hardware. `endpoints.deploy(task=…, model=…)` takes a task and a model alias; Pareta resolves the GPU, tensor-parallelism, and quantization from its registry. There is no hardware parameter anywhere in the SDK. See [Deploy endpoints](deploying-endpoints.md).
-- **Models are per-task aliases.** Every model id you see or pass — in `deploy(model=…)`, on leaderboard rows, in `run.results[].model_id`, in `endpoints.list()[].model` — is a per-task public alias like `qwen-vl-2`. Real internal ids never cross into the SDK. See [Tasks and the catalog](discovery.md).
-- **Inference and evals are metered against your org balance.** A successful `chat.completions.create()` debits your balance; `evals.runs.create()` debits for both open and frontier compute. `run.cost` reports the billed total as a `Decimal` in dollars (floored to whole cents), and `run.cost_micro_usd` the raw micro-USD. When the balance hits zero, both paths raise `InsufficientCreditsError` (402). Top-up is browser-only — the SDK exposes neither balance nor payment methods, by design. See [Evals](evaluation.md).
-- **Inference is OpenAI-compatible.** `base_url` plus your `pareta_sk_…` key is a drop-in OpenAI endpoint. You can point the `openai` SDK at the same `base_url` to call a deployed endpoint; Pareta's SDK adds the control plane (deploy, eval, discovery) that `openai` cannot do. See [Inference](inference.md).
+- **GPUs are hidden.** You configure a key, a URL, timeouts, and retries — never hardware. The serving stack behind `model="auto"` (GPUs, tensor-parallelism, quantization) is Pareta's job, resolved per request. There is no hardware parameter anywhere in the SDK.
+- **There is one model id.** `models.list()` returns exactly one entry — `"auto"`. "Which model?" is the question Pareta answers for you, per request. Frontier vendor ids (`gpt-5.5`, …) appear only in eval and comparison contexts, as baselines. See [Core concepts](core-concepts.md).
+- **Inference and evals are metered against your org balance.** A successful `chat.completions.create()` debits your balance once per request — however many internal model calls auto's plan makes, orchestration overhead is Pareta's cost, not yours. `evals.runs.create()` debits for the run's compute (auto and frontier alike). `run.cost` reports the billed total as a `Decimal` in dollars (floored to whole cents), and `run.cost_micro_usd` the raw micro-USD. When the balance hits zero, both paths raise `InsufficientCreditsError` (402). Top-up is browser-only — the SDK exposes neither balance nor payment methods, by design. See [Evals](evaluation.md).
+- **Inference is OpenAI-compatible.** `base_url` plus your `pareta_sk_…` key is a drop-in OpenAI endpoint — point the `openai` SDK at the same `base_url` and call `model="auto"`. Pareta's SDK adds what `openai` cannot do: the task catalog, intent matching, evals, and auto's metrics. See [Inference](inference.md).
 
 ## Configuration cookbook
 
@@ -599,7 +599,6 @@ try {
 ## See also
 
 - [Inference](inference.md) — OpenAI-compatible chat completions, streaming, and metering.
-- [Deploy endpoints](deploying-endpoints.md) — deploy a model to a task and operate it.
-- [Tasks and the catalog](discovery.md) — discover tasks, match intent, read leaderboards.
-- [Evals](evaluation.md) — score models on your own data, including `run.cost`.
+- [Core concepts](core-concepts.md) — tasks, `model="auto"`, and how requests are planned and routed.
+- [Evals](evaluation.md) — benchmark `"auto"` against frontier baselines on your own data, including `run.cost`.
 - [Errors](errors-and-retries.md) — the full exception hierarchy and how retries interact with it.

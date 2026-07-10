@@ -1,11 +1,11 @@
 # Cost & quality monitoring
 
-Every dollar you spend on Pareta runs through one org balance, and every model you serve gets watched for drift. This page is about reading both: what a call or an eval run actually cost, how the open model you deployed stacks up against the frontier baseline it replaced, and how to watch a live endpoint's spend and quality over time so you catch a regression before your users do.
+Every dollar you spend on Pareta runs through one org balance, and every `model="auto"` request your org sends gets rolled up for you. This page is about reading both: what a call or an eval run actually cost, how `"auto"` stacks up against the frontier baselines it replaces, and how to watch your live auto traffic — volume, success, spend, latency, and projected savings — so you catch a regression before your users do.
 
 Two things to keep straight up front, because they shape every number below:
 
-- **Money is metered against your org balance.** Inference (`chat.completions.create`) and evals (`evals.runs.create`) both debit the balance on success. An empty balance raises `InsufficientCreditsError` (402). The SDK never exposes balance or payment methods — top-up is browser-only, in the dashboard.
-- **GPUs are hidden and models are aliases.** You never priced a GPU-hour or picked a quantization; Pareta did. So cost shows up as a flat per-request rate for a numbered task (capability endpoints bill per token; speech bills per minute) or a run total, and the open models in every cost report are per-task public aliases, not raw model names. Frontier (vendor) ids are in the clear.
+- **Money is metered against your org balance.** Inference (`chat.completions.create`) and evals (`evals.runs.create`) both debit the balance on success — one debit per request, no matter how many internal model calls auto's plan makes. An empty balance raises `InsufficientCreditsError` (402). The SDK never exposes balance or payment methods — top-up is browser-only, in the dashboard.
+- **Models and GPUs are hidden behind `"auto"`.** You never priced a GPU-hour or picked a model; Pareta did, per request. So cost shows up as per-request debits, run totals, and an org-level rollup — and the only model ids in a cost report are `"auto"` and the frontier (vendor) ids in the clear.
 
 **Python**
 
@@ -48,11 +48,11 @@ console.log(run.cost);          // "0.07"  — billed dollars (string), floored 
 console.log(run.costMicroUsd);  // 74211   — raw micro-USD (74,211 uUSD)
 ```
 
-The flooring is one-directional on purpose: a sub-cent total bills as `$0.00` but keeps its true value on `cost_micro_usd`, so nothing is lost. **Per-unit rates stay in micro-USD** and are never floored — flooring a sub-cent unit rate to whole cents would erase the open-vs-frontier comparison that the whole exercise is about. You will see this on `result.mean_cost_micro_usd` below.
+The flooring is one-directional on purpose: a sub-cent total bills as `$0.00` but keeps its true value on `cost_micro_usd`, so nothing is lost. **Per-unit rates stay in micro-USD** and are never floored — flooring a sub-cent unit rate to whole cents would erase the auto-vs-frontier comparison that the whole exercise is about. You will see this on `result.mean_cost_micro_usd` below.
 
 ## What an eval run cost
 
-An eval run is the densest cost signal you get, because it prices several models on the same rows in one shot. The run carries the bill; each `EvalResult` carries that model's per-item rate.
+An eval run is the densest cost signal you get, because it prices `"auto"` and several frontier baselines on the same rows in one shot. The run carries the bill; each `EvalResult` carries that contender's per-item rate.
 
 **Python**
 
@@ -63,16 +63,16 @@ run = pa.evals.runs.create(
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
     ],
-    models=["llama-1", "qwen-2"],   # per-task open aliases
-    frontier="benchmarked",          # baselines already on this task's leaderboard
+    models=["auto"],                 # the contender
+    frontier="benchmarked",          # baselines already benchmarked on this task
     wait=True,                       # block until the run is terminal
 )
 
 print(f"run {run.id}: {run.status}")
-print(f"billed ${run.cost} ({run.cost_micro_usd} uUSD)")  # open + frontier compute
+print(f"billed ${run.cost} ({run.cost_micro_usd} uUSD)")  # auto + frontier compute
 
 for r in run.results:
-    print(f"{r.model_id:16} {r.kind:8} "
+    print(f"{r.model_id:16} {(r.kind or ''):8} "
           f"q={r.quality_mean:.3f} [{r.quality_ci_low:.3f}, {r.quality_ci_high:.3f}]  "
           f"~{r.mean_cost_micro_usd} uUSD/item  "
           f"({r.n_succeeded} ok, {r.error_count} err)")
@@ -87,13 +87,13 @@ const run = await pa.evals.runs.create({
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
   ],
-  models: ["llama-1", "qwen-2"],  // per-task open aliases
-  frontier: "benchmarked",         // baselines already on this task's leaderboard
-  wait: true,                      // block until the run is terminal
+  models: ["auto"],               // the contender
+  frontier: "benchmarked",        // baselines already benchmarked on this task
+  wait: true,                     // block until the run is terminal
 });
 
 console.log(`run ${run.id}: ${run.status}`);
-console.log(`billed $${run.cost} (${run.costMicroUsd} uUSD)`); // open + frontier compute
+console.log(`billed $${run.cost} (${run.costMicroUsd} uUSD)`); // auto + frontier compute
 
 for (const r of run.results) {
   console.log(
@@ -105,29 +105,30 @@ for (const r of run.results) {
 }
 ```
 
-`run.cost` / `run.cost_micro_usd` is the **total** for the run, across both the open candidates and any frontier baselines — both are metered against your balance. Each `EvalResult` reports `mean_cost_micro_usd`, the average cost per item for that model in micro-USD. That field is the heart of a cost comparison, so it deliberately stays in raw micro-USD: a 700-uUSD frontier item and a 90-uUSD open item both floor to `$0.00`, and the gap between them is exactly the thing you came to measure.
+`run.cost` / `run.cost_micro_usd` is the **total** for the run, across both auto and any frontier baselines — both are metered against your balance. Each `EvalResult` reports `mean_cost_micro_usd`, the average cost per item for that contender in micro-USD. That field is the heart of a cost comparison, so it deliberately stays in raw micro-USD: a 700-uUSD frontier item and a 90-uUSD auto item both floor to `$0.00`, and the gap between them is exactly the thing you came to measure.
 
 If the balance is empty, `create` raises `InsufficientCreditsError` (402) before any compute runs. See [Errors, retries & timeouts](../guide/errors-and-retries.md).
 
 ### Quality vs. cost, the actual trade
 
-The point of running open candidates next to a frontier baseline is to read both axes at once: how much quality you give up, and how much money you save. Split the results by `kind` and compare.
+The point of running `"auto"` next to frontier baselines is to read both axes at once: whether quality holds, and how much money you save. Pick auto's row out by `model_id` and compare it against each baseline (`kind == "frontier"`).
 
 **Python**
 
 ```python
 run = pa.evals.runs.retrieve(run_id)
 
-frontier = next((r for r in run.results if r.kind == "frontier"), None)
-open_models = [r for r in run.results if r.kind == "open"]
+auto = next(r for r in run.results if r.model_id == "auto")
+baselines = [r for r in run.results if r.kind == "frontier"]
 
-for r in sorted(open_models, key=lambda r: r.quality_mean or 0.0, reverse=True):
-    line = f"{r.model_id:16} q={r.quality_mean:.3f}  {r.mean_cost_micro_usd} uUSD/item"
-    if frontier and frontier.mean_cost_micro_usd and r.mean_cost_micro_usd:
+print(f"auto             q={auto.quality_mean:.3f}  {auto.mean_cost_micro_usd} uUSD/item")
+for f in sorted(baselines, key=lambda r: r.quality_mean or 0.0, reverse=True):
+    line = f"{f.model_id:16} q={f.quality_mean:.3f}  {f.mean_cost_micro_usd} uUSD/item"
+    if f.mean_cost_micro_usd and auto.mean_cost_micro_usd:
         # micro-USD ratio — never compute savings off the floored dollar field
-        cheaper = frontier.mean_cost_micro_usd / r.mean_cost_micro_usd
-        dq = (r.quality_mean or 0.0) - (frontier.quality_mean or 0.0)
-        line += f"  ({cheaper:.1f}x cheaper than {frontier.model_id}, dq={dq:+.3f})"
+        cheaper = f.mean_cost_micro_usd / auto.mean_cost_micro_usd
+        dq = (auto.quality_mean or 0.0) - (f.quality_mean or 0.0)
+        line += f"  (auto is {cheaper:.1f}x cheaper, dq={dq:+.3f})"
     print(line)
 ```
 
@@ -136,16 +137,17 @@ for r in sorted(open_models, key=lambda r: r.quality_mean or 0.0, reverse=True):
 ```typescript
 const run = await pa.evals.runs.retrieve(runId);
 
-const frontier = run.results.find((r) => r.kind === "frontier") ?? null;
-const openModels = run.results.filter((r) => r.kind === "open");
+const auto = run.results.find((r) => r.modelId === "auto")!;
+const baselines = run.results.filter((r) => r.kind === "frontier");
 
-for (const r of [...openModels].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))) {
-  let line = `${(r.modelId ?? "").padEnd(16)} q=${r.qualityMean?.toFixed(3)}  ${r.meanCostMicroUsd} uUSD/item`;
-  if (frontier && frontier.meanCostMicroUsd && r.meanCostMicroUsd) {
+console.log(`auto             q=${auto.qualityMean?.toFixed(3)}  ${auto.meanCostMicroUsd} uUSD/item`);
+for (const f of [...baselines].sort((a, b) => (b.qualityMean ?? 0) - (a.qualityMean ?? 0))) {
+  let line = `${(f.modelId ?? "").padEnd(16)} q=${f.qualityMean?.toFixed(3)}  ${f.meanCostMicroUsd} uUSD/item`;
+  if (f.meanCostMicroUsd && auto.meanCostMicroUsd) {
     // micro-USD ratio — never compute savings off the floored dollar field
-    const cheaper = frontier.meanCostMicroUsd / r.meanCostMicroUsd;
-    const dq = (r.qualityMean ?? 0) - (frontier.qualityMean ?? 0);
-    line += `  (${cheaper.toFixed(1)}x cheaper than ${frontier.modelId}, dq=${dq >= 0 ? "+" : ""}${dq.toFixed(3)})`;
+    const cheaper = f.meanCostMicroUsd / auto.meanCostMicroUsd;
+    const dq = (auto.qualityMean ?? 0) - (f.qualityMean ?? 0);
+    line += `  (auto is ${cheaper.toFixed(1)}x cheaper, dq=${dq >= 0 ? "+" : ""}${dq.toFixed(3)})`;
   }
   console.log(line);
 }
@@ -154,19 +156,19 @@ for (const r of [...openModels].sort((a, b) => (b.qualityMean ?? 0) - (a.quality
 Two rules when you read this:
 
 - **Compute savings from `mean_cost_micro_usd`, never from `cost`.** The dollar field is floored to cents and a per-item rate is almost always sub-cent, so a ratio built on it would divide by zero or lie. Stay in micro-USD for any per-unit math.
-- **Respect the confidence interval.** `quality_mean` comes with `quality_ci_low` / `quality_ci_high` (a 95% CI). Two models whose intervals overlap are not meaningfully different on this sample — add rows before you call one the winner on a hair's-width quality edge.
+- **Respect the confidence interval.** `quality_mean` comes with `quality_ci_low` / `quality_ci_high` (a 95% CI). Two contenders whose intervals overlap are not meaningfully different on this sample — add rows before you call the verdict on a hair's-width quality edge.
 
-Full eval mechanics (building sets, frontier roster selection, document tasks, async) live in [Evaluating on your own data](./evaluate-on-your-data.md) and the [Evaluation guide](../guide/evaluation.md).
+Full eval mechanics (building sets, frontier roster selection, document tasks, async) live in [Benchmark `"auto"` on your own data](./evaluate-on-your-data.md) and the [Evaluation guide](../guide/evaluation.md).
 
 ## What an inference call cost
 
-Inference is OpenAI-compatible, so `chat.completions.create` returns a `ChatCompletion` with a `usage` block. Use it for token accounting; the dollar cost of that traffic lands on the endpoint's cost metric (next section), since pricing is per-request at the endpoint, not returned inline per call.
+Inference is OpenAI-compatible, so `chat.completions.create` returns a `ChatCompletion` with a `usage` block. Use it for token accounting; the dollar cost of that traffic lands in your org's auto rollup (next section) rather than inline on each response.
 
 **Python**
 
 ```python
 resp = pa.chat.completions.create(
-    model="ep-contract-key-fields",   # an endpoint id from endpoints.deploy()
+    model="auto",
     messages=[{"role": "user", "content": "Extract the effective date from: ..."}],
 )
 
@@ -179,7 +181,7 @@ print(resp.choices[0].message.content)
 
 ```typescript
 const resp = await pa.chat.completions.create({
-  model: "ep-contract-key-fields", // an endpoint id from endpoints.deploy()
+  model: "auto",
   messages: [{ role: "user", content: "Extract the effective date from: ..." }],
 });
 
@@ -188,108 +190,98 @@ console.log(u.promptTokens, u.completionTokens, u.totalTokens);
 console.log(resp.choices[0].message.content);
 ```
 
-Each successful call debits your org balance. An empty balance raises `InsufficientCreditsError` (402) here too. The inference surface — streaming, kwargs pass-through, the OpenAI compatibility contract — is covered in [Running inference](../guide/inference.md).
+Each successful call debits your org balance — one debit per request, no matter how many internal model calls auto's plan makes. An empty balance raises `InsufficientCreditsError` (402) here too. The inference surface — streaming, kwargs pass-through, the OpenAI compatibility contract — is covered in [Running inference](../guide/inference.md).
 
-## Monitoring a live endpoint
+## Monitoring your live auto traffic
 
-Once a model is serving, `endpoints.metrics(endpoint_id)` is your window into its spend, quality, latency, and uptime over time. It returns a `Metrics` handle with one method per dimension. Each method takes free-form `**params` that become the query string (e.g. a time window or a grouping), and each returns the raw metric JSON for that dimension — shapes vary by dimension, and typed models arrive with the OpenAPI generation later.
+Once production traffic is flowing, `auto.metrics()` is your window into it: one org-level rollup of every `model="auto"` request, covering volume, success, spend, latency, and the savings story. One call, no parameters — Python returns the raw rollup dict; TypeScript types it as `AutoMetrics`:
 
 **Python**
 
 ```python
-m = pa.endpoints.metrics("ep-contract-key-fields")
+m = pa.auto.metrics()   # dict — the org's auto rollup
 
-cost      = m.cost()           # per-endpoint spend + vs-frontier savings
-quality   = m.quality()        # judge windows over time
-perf      = m.performance()    # p50/p95/p99 latency
-uptime    = m.uptime()         # availability
-activity  = m.activity()       # usage stats
-
-# Narrow with params — they pass straight through as the query string.
-last_day  = m.cost(window="24h")
-by_day    = m.cost(group_by="day")
+print(m["requests_30d"], "requests (30d),", m["requests_today"], "today")
+print("success rate (30d):", m["success_rate_30d"])
+print("billed (30d):", m["billed_micro_usd_30d"], "uUSD")
+print("projected savings vs frontier (30d):", m["savings_vs_frontier_micro_usd_30d"], "uUSD")
 ```
 
 **TypeScript**
 
 ```typescript
-const m = pa.endpoints.metrics("ep-contract-key-fields"); // sync handle, no await
+const m = await pa.auto.metrics(); // typed AutoMetrics
 
-const cost     = await m.cost();          // per-endpoint spend + vs-frontier savings
-const quality  = await m.quality();       // judge windows over time
-const perf     = await m.performance();   // p50/p95/p99 latency
-const uptime   = await m.uptime();        // availability
-const activity = await m.activity();      // usage stats
-
-// Narrow with params — they pass straight through as the query string.
-const lastDay = await m.cost({ window: "24h" });
-const byDay   = await m.cost({ group_by: "day" });
+console.log(m.requests_30d, "requests (30d),", m.requests_today, "today");
+console.log("success rate (30d):", m.success_rate_30d);
+console.log("billed (30d):", m.billed_micro_usd_30d, "uUSD");
+console.log("projected savings vs frontier (30d):", m.savings_vs_frontier_micro_usd_30d, "uUSD");
 ```
 
-`endpoints.metrics(id)` is a cheap local handle — it does no I/O until you call a dimension. So you can hold one handle and query several dimensions off it.
+What comes back, dimension by dimension:
 
-### Cost and the vs-frontier savings framing
+- **Volume + success** — `requests_30d`, `requests_today`, `success_rate_30d` (`None` with no traffic), and `days_30d`: one cell per day (`{day, n, ok, success_rate}`) over the last 30 days.
+- **Spend** — `billed_micro_usd_30d` and `billed_micro_usd_today`, in raw micro-USD. The money convention holds: floor to cents yourself only when you want a billed-dollar figure.
+- **Latency + errors** — `performance_hourly_7d`: hourly buckets (`{hour, requests, error_rate, p50_ms, p95_ms}`) over the last 7 days.
+- **Projected savings vs frontier** — `savings_vs_frontier_micro_usd_30d` and `savings_multiple_30d`: what the same traffic would have cost at frontier list prices vs what you were billed. It is **projected** — a frontier list-priced counterfactual — and `None` when there is no traffic to project from.
+- **`last_request`** — the most recent request's `created_at`, `status_code`, `duration_ms`, and billed cost; a quick liveness check.
 
-`m.cost()` is the per-endpoint counterpart to a run's total: it reports what the endpoint has spent and frames it against the frontier baseline the open model stands in for. That "vs-frontier savings" framing is the whole pitch of serving an open model — the metric tells you, in production, how much cheaper this endpoint is than calling the vendor model would have been. Because the dimension returns raw JSON, read it with the dict accessors:
+### Watching for drift
+
+The rollup is cheap to poll, so put it on a schedule and alert off the health fields: a `days_30d` cell whose `success_rate` dips below your bar, or a `performance_hourly_7d` bucket whose `error_rate` or `p95_ms` creeps up, is your cue to investigate before users notice.
 
 **Python**
 
 ```python
-cost = pa.endpoints.metrics("ep-contract-key-fields").cost(window="7d")
+m = pa.auto.metrics()
 
-# raw JSON dict — use the keys the dimension returns
-print(cost.get("total_micro_usd"))
-print(cost.get("frontier_baseline_micro_usd"))
-print(cost.get("savings_micro_usd"))
+today = m["days_30d"][-1] if m["days_30d"] else None
+if today and today["success_rate"] < 0.99:
+    print(f"success slipped to {today['success_rate']:.4f} today — investigate")
 ```
 
 **TypeScript**
 
 ```typescript
-// dimensions return raw JSON (untyped) — read the keys the backend sends
-const cost = (await pa.endpoints
-  .metrics("ep-contract-key-fields")
-  .cost({ window: "7d" })) as Record<string, unknown>;
+const m = await pa.auto.metrics();
 
-console.log(cost.total_micro_usd);
-console.log(cost.frontier_baseline_micro_usd);
-console.log(cost.savings_micro_usd);
-```
-
-The exact keys are owned by the backend and may grow; treat the dict as the source of truth and pull what you need. The money convention still holds — anything labeled `micro_usd` is raw micro-USD (`1_000_000` == `$1.00`), and you floor to cents yourself only when you want a billed-dollar figure.
-
-### Quality monitoring (judge windows)
-
-`m.quality()` reports the endpoint's quality over rolling windows, scored by the platform's judge — the same scoring machinery evals use, run continuously against live traffic so you catch drift without launching a run. Poll it on a schedule and alert when a window dips below your bar.
-
-**Python**
-
-```python
-q = pa.endpoints.metrics("ep-contract-key-fields").quality(window="24h")
-
-score = q.get("quality_mean")
-if score is not None and score < 0.90:
-    print(f"quality slipped to {score:.3f} on the last window — investigate")
-```
-
-**TypeScript**
-
-```typescript
-const q = (await pa.endpoints
-  .metrics("ep-contract-key-fields")
-  .quality({ window: "24h" })) as Record<string, unknown>;
-
-const score = q.quality_mean as number | undefined;
-if (score != null && score < 0.9) {
-  console.log(`quality slipped to ${score.toFixed(3)} on the last window — investigate`);
+const today = m.days_30d.at(-1);
+if (today && today.success_rate < 0.99) {
+  console.log(`success slipped to ${today.success_rate.toFixed(4)} today — investigate`);
 }
 ```
 
-Latency (`performance`) and `uptime` round out the operational picture; `activity` reports usage volume. They are all the same call shape: pass a window or grouping, read the returned dict.
+### Spot-check a prompt against a frontier vendor
+
+The rollup's savings number is a projection. For a concrete single-prompt data point, run the same messages against a frontier vendor and compare with what `"auto"` gave you:
+
+**Python**
+
+```python
+side = pa.auto.compare_frontier(
+    model="gpt-5.5",   # or gemini-3-5-flash, gemini-3-1-pro, claude-sonnet-4-6
+    messages=[{"role": "user", "content": "Extract the effective date from: ..."}],
+)
+print(side["model"], side["cost_micro_usd"], "uUSD,", side["latency_ms"], "ms")
+print(side["content"])
+```
+
+**TypeScript**
+
+```typescript
+const side = await pa.auto.compareFrontier({
+  model: "gpt-5.5",   // or gemini-3-5-flash, gemini-3-1-pro, claude-sonnet-4-6
+  messages: [{ role: "user", content: "Extract the effective date from: ..." }],
+});
+console.log(side.model, side.cost_micro_usd, "uUSD,", side.latency_ms, "ms");
+console.log(side.content);
+```
+
+`compare_frontier` is **metered at the vendor's actual token cost** — one debit per call, and a failed vendor call bills $0. The allowed models are gpt-5.5, gemini-3-5-flash, gemini-3-1-pro, and claude-sonnet-4-6.
 
 ## Async
 
-Every method here has an async twin on `AsyncPareta` with the same signatures. Note one shape detail: `endpoints.metrics(id)` itself is **not** a coroutine even on the async client — it returns an `AsyncMetrics` handle synchronously — but the dimension methods on that handle are `async def`.
+Every method here has an async twin on `AsyncPareta` with the same signatures — `auto.metrics()` and `auto.compare_frontier()` included. Pull the run and the rollup concurrently:
 
 **Python**
 
@@ -299,15 +291,13 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        run = await pa.evals.runs.retrieve(run_id)
-        print("billed", run.cost, "/", run.cost_micro_usd, "uUSD")
-
-        m = pa.endpoints.metrics("ep-contract-key-fields")  # sync handle, no await
-        cost, quality = await asyncio.gather(
-            m.cost(window="7d"),
-            m.quality(window="24h"),
+        run, m = await asyncio.gather(
+            pa.evals.runs.retrieve(run_id),
+            pa.auto.metrics(),
         )
-        print(cost.get("savings_micro_usd"), quality.get("quality_mean"))
+        print("billed", run.cost, "/", run.cost_micro_usd, "uUSD")
+        print("30d spend:", m["billed_micro_usd_30d"], "uUSD")
+        print("projected savings:", m["savings_vs_frontier_micro_usd_30d"], "uUSD")
 
 asyncio.run(main())
 ```
@@ -317,26 +307,22 @@ asyncio.run(main())
 ```typescript
 // No AsyncPareta in TS — there's one Promise-only client, so every method is
 // already async. Concurrency is just Promise.all over the awaitables.
-const run = await pa.evals.runs.retrieve(runId);
+const [run, m] = await Promise.all([
+  pa.evals.runs.retrieve(runId),
+  pa.auto.metrics(),
+]);
 console.log("billed", run.cost, "/", run.costMicroUsd, "uUSD");
-
-const m = pa.endpoints.metrics("ep-contract-key-fields"); // sync handle, no await
-const [cost, quality] = (await Promise.all([
-  m.cost({ window: "7d" }),
-  m.quality({ window: "24h" }),
-])) as Array<Record<string, unknown>>;
-console.log(cost.savings_micro_usd, quality.quality_mean);
+console.log("30d spend:", m.billed_micro_usd_30d, "uUSD");
+console.log("projected savings:", m.savings_vs_frontier_micro_usd_30d, "uUSD");
 ```
 
 ## Lossless access
 
-Every response object keeps the raw server JSON. `run.to_dict()`, `result.to_dict()`, and the dicts returned by the metric dimensions give you everything the API sent, including fields not yet surfaced as typed properties. When a metric grows a new key before the SDK grows a property for it, `to_dict()` (or plain `.get()`) is your escape hatch.
+Every response object keeps the raw server JSON. `run.to_dict()` and `result.to_dict()` give you everything the API sent, including fields not yet surfaced as typed properties. `auto.metrics()` already hands you the raw rollup (a dict in Python, `AutoMetrics` in TypeScript), so when the backend grows a new key it shows up without an SDK upgrade.
 
 ## See also
 
-- [Evaluating on your own data](./evaluate-on-your-data.md) — build eval sets, pick frontier baselines, read per-model results.
-- [Deploy a model and call it](./deploy-and-infer.md) — task to live endpoint in two calls.
+- [Benchmark `"auto"` on your own data](./evaluate-on-your-data.md) — build eval sets, pick frontier baselines, read per-contender results.
 - [Concurrent & async](./concurrent-async.md) — fan-out inference and parallel eval runs.
-- [Deploying endpoints](../guide/deploying-endpoints.md) — the full `endpoints` surface, including the `metrics` dimension table.
 - [Running inference](../guide/inference.md) — the OpenAI-compatible chat surface and streaming.
 - [Errors, retries & timeouts](../guide/errors-and-retries.md) — `InsufficientCreditsError`, the money convention, and the exception hierarchy.

@@ -1,4 +1,8 @@
-"""`pareta` — a Typer CLI over the SDK control plane.
+"""`pareta` — a Typer CLI over the SDK.
+
+model:"auto" is the product: `pareta chat` sends every request to Pareta's
+routing brain, `pareta evals run` proves it against frontier models on your
+own data, and `pareta auto metrics` shows what your live traffic saves.
 
 Installed with `pip install pareta[cli]` (wires the `pareta` console script).
 Auth comes from the environment exactly like the SDK: `PARETA_API_KEY`
@@ -6,10 +10,10 @@ Auth comes from the environment exactly like the SDK: `PARETA_API_KEY`
 client, maps `ParetaError` to a clean stderr message + a non-zero exit (never a
 traceback), and renders results as rich tables — or as raw JSON with `--json`.
 
-    pareta tasks list
-    pareta endpoints deploy --task contract-kie --wait
-    pareta chat ep_abc "summarize this"
-    pareta --json models list
+    pareta chat "summarize this"          # model:"auto" by default
+    pareta tasks match "extract fields from invoices"
+    pareta evals run --task contract-kie --file rows.jsonl --models auto --frontier
+    pareta --json auto metrics
 """
 
 from __future__ import annotations
@@ -87,7 +91,7 @@ def _dash(v: Any) -> str:
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="Pareta — deploy open-weights endpoints, run metered inference, eval on your data.",
+    help='Pareta — model:"auto" inference, evals on your own data, auto metrics.',
 )
 
 
@@ -186,60 +190,14 @@ def tasks_show(
     _emit(state, task)
 
 
-@tasks_app.command("leaderboard")
-def tasks_leaderboard(
-    ctx: typer.Context,
-    task_id: str = typer.Argument(..., help="Task id."),
-) -> None:
-    """Show models ranked by quality/cost for a task."""
-    state = _state(ctx)
-    try:
-        board = _client().tasks.leaderboard(task_id)
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit(state, board)
-        return
-    table = Table(title=f"Leaderboard — {_dash(board.task_id)}  (metric {_dash(board.metric)})")
-    table.add_column("model", style="cyan")
-    table.add_column("kind")
-    table.add_column("quality", justify="right")
-    table.add_column(f"cost/req ({_dash(board.cost_unit)})", justify="right")
-    for m in board.models:
-        table.add_row(_dash(m.name), _dash(m.kind), _dash(m.quality), _dash(m.cost_per_request_micro_usd))
-    if board.frontier is not None:
-        f = board.frontier
-        table.add_row(_dash(f.name), "frontier", _dash(f.quality), _dash(f.cost_per_request_micro_usd))
-    _out.print(table)
-    if board.recommended:
-        _out.print(f"recommended: [green]{board.recommended}[/green]")
-
-
-@tasks_app.command("recommended")
-def tasks_recommended(
-    ctx: typer.Context,
-    task_id: str = typer.Argument(..., help="Task id."),
-) -> None:
-    """Print the task's recommended deployable model."""
-    state = _state(ctx)
-    try:
-        rec = _client().tasks.recommended(task_id)
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json({"task_id": task_id, "recommended": rec})
-        return
-    _out.print(_dash(rec))
-
-
 # ── models ───────────────────────────────────────────────────────────────
-models_app = typer.Typer(no_args_is_help=True, help="The deployed models your org can call.")
+models_app = typer.Typer(no_args_is_help=True, help="The models your org can call.")
 app.add_typer(models_app, name="models")
 
 
 @models_app.command("list")
 def models_list(ctx: typer.Context) -> None:
-    """List deployed, callable models (endpoints)."""
+    """List the models your org can call."""
     state = _state(ctx)
     try:
         models = _client().models.list()
@@ -254,196 +212,6 @@ def models_list(ctx: typer.Context) -> None:
     table.add_column("created", justify="right")
     for m in models:
         table.add_row(_dash(m.id), _dash(m.owned_by), _dash(m.created))
-    _out.print(table)
-
-
-# ── endpoints ────────────────────────────────────────────────────────────
-endpoints_app = typer.Typer(no_args_is_help=True, help="Deploy + operate endpoints.")
-app.add_typer(endpoints_app, name="endpoints")
-
-
-@endpoints_app.command("deploy")
-def endpoints_deploy(
-    ctx: typer.Context,
-    task: str = typer.Option(..., "--task", help="Task to deploy for (e.g. contract-kie)."),
-    model: str = typer.Option("recommended", "--model", help="Model id or 'recommended'."),
-    name: Optional[str] = typer.Option(None, "--name", help="Optional endpoint name."),
-    wait: bool = typer.Option(False, "--wait", help="Block until the endpoint is live."),
-) -> None:
-    """Deploy a model for a task. Pareta picks the GPU/serving config.
-
-    Without --wait, streams the deploy progress events. With --wait, blocks and
-    prints the live endpoint when it's ready."""
-    state = _state(ctx)
-    try:
-        client = _client()
-        if wait:
-            endpoint = client.endpoints.deploy(task=task, model=model, name=name, wait=True)
-            if state.json:
-                _emit(state, endpoint)
-            else:
-                _out.print(f"[green]live[/green]  id={_dash(endpoint.id)}  status={_dash(endpoint.status)}")
-            return
-        # Stream the progress events so the user sees the deploy unfold.
-        last: Any = None
-        for ev in client.endpoints.deploy(task=task, model=model, name=name, wait=False):
-            last = ev
-            event = ev.get("event")
-            data = ev.get("data")
-            if state.json:
-                _emit_json(ev)
-            else:
-                _out.print(f"[dim]{_dash(event)}[/dim] {_summarize_event(data)}")
-            if event == "error":
-                raise ParetaError(_event_message(data) or "deploy failed")
-        if not state.json and last is not None and last.get("event") != "complete":
-            _err.print("[yellow]warning:[/yellow] deploy stream ended without a 'complete' event")
-    except ParetaError as e:
-        raise _fail(e)
-
-
-def _event_message(data: Any) -> Optional[str]:
-    if isinstance(data, dict):
-        return data.get("message") or data.get("status")
-    return None
-
-
-def _summarize_event(data: Any) -> str:
-    if isinstance(data, dict):
-        return _event_message(data) or ""
-    return _dash(data) if data is not None else ""
-
-
-@endpoints_app.command("list")
-def endpoints_list(ctx: typer.Context) -> None:
-    """List your org's endpoints."""
-    state = _state(ctx)
-    try:
-        endpoints = _client().endpoints.list()
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json([e.to_dict() for e in endpoints])
-        return
-    table = Table(title="Endpoints")
-    table.add_column("id", style="cyan", no_wrap=True)
-    table.add_column("status")
-    table.add_column("task")
-    table.add_column("model")
-    for e in endpoints:
-        table.add_row(_dash(e.id), _dash(e.status), _dash(e.task), _dash(e.model))
-    _out.print(table)
-
-
-@endpoints_app.command("show")
-def endpoints_show(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-) -> None:
-    """Show one endpoint's full record."""
-    state = _state(ctx)
-    try:
-        endpoint = _client().endpoints.retrieve(endpoint_id)
-    except ParetaError as e:
-        raise _fail(e)
-    _emit(state, endpoint)
-
-
-@endpoints_app.command("start")
-def endpoints_start(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-) -> None:
-    """Start a stopped endpoint."""
-    state = _state(ctx)
-    try:
-        res = _client().endpoints.start(endpoint_id)
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json(res)
-    else:
-        _out.print(f"[green]started[/green] {endpoint_id}")
-
-
-@endpoints_app.command("stop")
-def endpoints_stop(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-) -> None:
-    """Stop a running endpoint."""
-    state = _state(ctx)
-    try:
-        res = _client().endpoints.stop(endpoint_id)
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json(res)
-    else:
-        _out.print(f"[yellow]stopped[/yellow] {endpoint_id}")
-
-
-@endpoints_app.command("delete")
-def endpoints_delete(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
-) -> None:
-    """Delete an endpoint (destructive — prompts unless --yes)."""
-    if not yes:
-        typer.confirm(f"Delete endpoint {endpoint_id}? This cannot be undone.", abort=True)
-    try:
-        _client().endpoints.delete(endpoint_id)
-    except ParetaError as e:
-        raise _fail(e)
-    _out.print(f"[red]deleted[/red] {endpoint_id}")
-
-
-@endpoints_app.command("metrics")
-def endpoints_metrics(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-) -> None:
-    """Show an endpoint's performance metrics."""
-    state = _state(ctx)
-    try:
-        data = _client().endpoints.metrics(endpoint_id).performance()
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json(data)
-        return
-    _print_kv(f"Metrics — {endpoint_id}", data)
-
-
-@endpoints_app.command("cost")
-def endpoints_cost(
-    ctx: typer.Context,
-    endpoint_id: str = typer.Argument(..., help="Endpoint id."),
-) -> None:
-    """Show an endpoint's cost breakdown."""
-    state = _state(ctx)
-    try:
-        data = _client().endpoints.metrics(endpoint_id).cost()
-    except ParetaError as e:
-        raise _fail(e)
-    if state.json:
-        _emit_json(data)
-        return
-    _print_kv(f"Cost — {endpoint_id}", data)
-
-
-def _print_kv(title: str, data: Any) -> None:
-    """Render a flat dict as a key/value table; fall back to JSON for anything
-    that isn't a plain mapping (metric shapes vary by dimension)."""
-    if not isinstance(data, dict):
-        _emit_json(data)
-        return
-    table = Table(title=title, show_header=False)
-    table.add_column("key", style="cyan")
-    table.add_column("value")
-    for k, v in data.items():
-        table.add_row(str(k), json.dumps(v, default=str) if isinstance(v, (dict, list)) else _dash(v))
     _out.print(table)
 
 
@@ -463,12 +231,13 @@ def evals_run(
     name: Optional[str] = typer.Option(None, "--name", help="Name for an on-the-fly eval set."),
     wait: bool = typer.Option(False, "--wait", help="Block until the run finishes."),
 ) -> None:
-    """Run a deploy-free eval. Either point at an existing --eval-set, or pass
-    --task with a --file of JSONL items to build one on the fly. --frontier adds
+    """Run an eval on your own data. Either point at an existing --eval-set, or
+    pass --task with a --file of JSONL items to build one on the fly. Include
+    "auto" in --models to benchmark the routing brain itself; --frontier adds
     the task's benchmarked vendor models as baselines."""
     state = _state(ctx)
     if not models:
-        _err.print("[red]error:[/red] --models is required (the open candidates to evaluate)")
+        _err.print("[red]error:[/red] --models is required (e.g. --models auto)")
         raise typer.Exit(code=2)
     # frontier flag → the 'benchmarked' roster keyword the SDK understands.
     frontier_arg = "benchmarked" if frontier else None
@@ -623,8 +392,8 @@ def auto_metrics(ctx: typer.Context) -> None:
         m = _client().auto.metrics()
     except ParetaError as e:
         raise _fail(e)
-    if state.json_output:
-        _print_json(m)
+    if state.json:
+        _emit_json(m)
         return
     _out.print(f"requests (30d):     {m.get('requests_30d')}")
     sr = m.get("success_rate_30d")
@@ -657,9 +426,9 @@ def auto_compare(
             model=frontier, messages=[{"role": "user", "content": prompt}])
     except ParetaError as e:
         raise _fail(e)
-    if state.json_output:
-        _print_json({"auto": {"content": auto_text},
-                     "frontier": fr})
+    if state.json:
+        _emit_json({"auto": {"content": auto_text},
+                    "frontier": fr})
         return
     _out.print("[bold]Pareta (auto)[/bold]")
     _out.print(auto_text or "")
@@ -676,8 +445,7 @@ def chat(
     prompt: Optional[str] = typer.Argument(None, help="Prompt text (omit to read from stdin)."),
     model: str = typer.Option("auto", "--model", "-m",
                               help='Model to call. The default "auto" is the routing '
-                                   "brain — Pareta picks the best model per request. "
-                                   "Pass an endpoint id to pin one model."),
+                                   "brain — Pareta picks the best model per request."),
     stream: bool = typer.Option(False, "--stream", "-s", help="Stream tokens to stdout."),
 ) -> None:
     """Send a one-shot chat completion (default model: "auto" — the routing

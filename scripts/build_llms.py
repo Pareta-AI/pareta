@@ -60,12 +60,26 @@ INTRO = (
     "Each request is planned, routed to benchmark-proven open specialists, "
     "verified, and falls back to a frontier model when that's the right call — "
     "one request, one bill. Its SDKs also let you benchmark `\"auto\"` against "
-    "frontier models on your own data, read your auto traffic metrics, browse "
-    "the per-task benchmark catalog, and deploy dedicated open-weights "
-    "endpoints when you want to pin one model (Pareta picks the GPU). "
-    "Authenticate with a `pareta_sk_` key from the dashboard or the "
+    "frontier models on your own data, read your auto traffic metrics, and "
+    "browse the per-task benchmark catalog (`tasks.match` answers \"can Pareta "
+    "do X?\"). Authenticate with a `pareta_sk_` key from the dashboard or the "
     "`PARETA_API_KEY` environment variable."
 )
+
+# Pages EXCLUDED from the published docs set (llms.txt, llms-full.txt, and the
+# Docusaurus site). Founder decision, 2026-07-08 (auto-only surface):
+# deploy/endpoint/leaderboard docs are removed from publish entirely —
+# model:"auto" routes every request, and tasks.match answers "can Pareta do
+# X?". The source .md files stay on disk in sdk/docs/. This list must stay in
+# sync with docs-site/sidebars.js and the docs-plugin `exclude` globs in
+# docs-site/docusaurus.config.js.
+EXCLUDED: frozenset[str] = frozenset({
+    "guide/deploying-endpoints",
+    "guide/discovery",
+    "examples/deploy-and-infer",
+    "examples/find-and-deploy-best-model",
+    "reference/endpoints",
+})
 
 # Canonical reading order (mirrors the section index pages). One flat list — each
 # page covers every SDK via stacked code blocks. README index files are
@@ -73,16 +87,16 @@ INTRO = (
 SECTIONS: list[tuple[str, str, list[str]]] = [
     ("Guide", "guide", [
         "installation", "quickstart", "core-concepts", "inference",
-        "deploying-endpoints", "discovery", "evaluation", "errors-and-retries",
+        "evaluation", "errors-and-retries",
         "async", "configuration", "cli", "mcp", "skill",
     ]),
     ("Examples", "examples", [
-        "deploy-and-infer", "find-and-deploy-best-model", "evaluate-on-your-data",
+        "evaluate-on-your-data",
         "document-extraction", "streaming-chat", "concurrent-async",
         "cost-and-metrics", "migrate-from-openai",
     ]),
     ("Reference", "reference", [
-        "client", "chat", "models", "endpoints", "tasks", "evals", "audio",
+        "client", "chat", "models", "tasks", "evals", "audio",
         "exceptions", "types", "http-api",
     ]),
 ]
@@ -142,6 +156,14 @@ def _read(section: str, stem: str) -> str | None:
 
 
 def build() -> tuple[str, str]:
+    # Guard: an excluded page must never be re-added to SECTIONS by accident.
+    listed = {f"{section}/{stem}" for _, section, stems in SECTIONS for stem in stems}
+    banned = sorted(listed & EXCLUDED)
+    if banned:
+        raise SystemExit(
+            f"build_llms: pages in SECTIONS are on the EXCLUDED list "
+            f"(founder decision 2026-07-08, auto-only surface): {banned}")
+
     blurb = _sdk_blurb()
     index_lines = [f"# Pareta\n", f"> {INTRO}\n", f"{blurb}\n"]
     full_lines = [
