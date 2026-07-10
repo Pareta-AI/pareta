@@ -1,9 +1,12 @@
-"""`client.tasks` — browse the benchmark catalog + match free-text intent.
+"""`client.tasks` — the grading-contract directory for evals.
 
-- list / retrieve: the catalog and a task's schema + default scorer.
-- match: free-text intent → the task (or capability lane) Pareta covers it
-  with. This is the discovery surface: feed the matched task into
-  `client.evals` to prove `model="auto"` on your own data.
+A task names how a dataset is scored: the row shape + the scorer. Inference
+never takes a task id (`model="auto"` routes everything); you need one exactly
+when benchmarking your own data via `client.evals`.
+
+- list / retrieve: browse the contracts and a contract's row schema + scorer.
+- match: a plain-English description of your dataset → the contract that
+  grades it (feed the matched task id into `evals.runs.create(task=...)`).
 """
 
 from __future__ import annotations

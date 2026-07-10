@@ -4,7 +4,7 @@
 
 - **Serves `model="auto"` inference.** Metered, OpenAI-compatible (this SDK and the stock `openai` client are interchangeable), streaming included. Nothing to deploy.
 - **Evaluates it on your own data.** Run `"auto"` head-to-head against frontier baselines on your rows, then read per-contender quality and cost.
-- **Answers "can Pareta do X?".** Match a sentence to the benchmark catalog auto routes across (`tasks.match`), and browse the tasks behind it.
+- **Grades your data.** `tasks.match` maps a plain-English description of your dataset to the grading contract an eval scores it with; `tasks.list`/`retrieve` browse the contracts.
 
 A few platform truths shape the whole API:
 

@@ -153,7 +153,7 @@ One element of a `ModelList`.
 
 ## Discovery types
 
-These come from the `tasks` namespace and answer "can Pareta do X?" before you
+These come from the `tasks` namespace and name the grading contract before you
 send traffic.
 
 ### Task
@@ -428,6 +428,6 @@ the 402; topping up is browser-only.
 ## See also
 
 - [Running inference](../guide/inference.md) — `ChatCompletion`, streaming chunks, and the async iterator form
-- [tasks](./tasks.md) — `Task` and `TaskMatch` in depth, and the "can Pareta do X?" flow
+- [tasks](./tasks.md) — `Task` and `TaskMatch` in depth, and the dataset-to-contract flow
 - [Evaluating models](../guide/evaluation.md) — building `EvalSet`s, running evals, and reading `EvalRun` cost
 - [Core concepts](../guide/core-concepts.md) — the auto story, hidden hardware, and metering, end to end

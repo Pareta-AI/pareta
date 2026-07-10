@@ -1,6 +1,6 @@
 # Pareta SDKs — full documentation
 
-> Pareta is one OpenAI-compatible endpoint with one model id: `"auto"`. Each request is planned, routed to benchmark-proven open specialists, verified, and falls back to a frontier model when that's the right call — one request, one bill. Its SDKs also let you benchmark `"auto"` against frontier models on your own data, read your auto traffic metrics, and browse the per-task benchmark catalog (`tasks.match` answers "can Pareta do X?"). Authenticate with a `pareta_sk_` key from the dashboard or the `PARETA_API_KEY` environment variable.
+> Pareta is one OpenAI-compatible endpoint with one model id: `"auto"`. Each request is planned, routed to benchmark-proven open specialists, verified, and falls back to a frontier model when that's the right call — one request, one bill. Its SDKs also let you benchmark `"auto"` against frontier models on your own data, read your auto traffic metrics, and find the grading contract that scores your eval data (`tasks.match`). Authenticate with a `pareta_sk_` key from the dashboard or the `PARETA_API_KEY` environment variable.
 
 Pareta ships one SDK per language, all sharing these docs and the same `/v1` HTTP API: Python (`pip install pareta`, `from pareta import Pareta`); TypeScript/JavaScript (`npm install pareta`, `import { Pareta } from "pareta"`).
 
@@ -387,10 +387,12 @@ The SDK only ever consumes a key. It never creates, lists, or revokes them, and
 it never exposes your balance or payment methods. Topping up credit is
 browser-only.
 
-## Ask what Pareta can do
+## Find the grading contract for your data
 
-There is no model to pick and nothing to deploy. The one question left is
-coverage — "can Pareta do X?" — and `tasks.match` answers it from a sentence:
+There is no model to pick and nothing to deploy — send any generation job
+straight to `model="auto"`. The one lookup you'll ever do is for
+benchmarking: `tasks.match` maps a plain-English description of your dataset
+to the grading contract an eval scores it with:
 
 **Python**
 
@@ -655,10 +657,11 @@ traffic + savings (`auto.metrics()`) — from code.
 
 Pareta is one OpenAI-compatible endpoint with one model id: **`"auto"`**. This
 page covers the handful of ideas the rest of the SDK assumes you understand:
-the **routing brain** behind `model="auto"`, **tasks** (the benchmark catalog
-it routes across), **open vs frontier** models, why **models** and **hardware**
+the **routing brain** behind `model="auto"`, **one interface per data
+shape**, **tasks** (the grading contracts evals score against), **open vs
+frontier** models, why **models** and **hardware**
 are hidden, how **metering** works, and the **funnel** that ties them together
-(match your intent, prove `"auto"` on your data, ship it, watch the metrics).
+(prove `"auto"` on your data, ship it, watch the metrics).
 
 Every code block below is runnable as written. They all start from a client:
 
@@ -723,20 +726,36 @@ surfaces *around* that call live on `pa.auto`:
   token cost; a failed vendor call bills $0. Allowed models: `gpt-5.5`,
   `gemini-3-5-flash`, `gemini-3-1-pro`, `claude-sonnet-4-6`.
 
-## Tasks: the benchmark catalog
+## One interface per data shape
 
-A **task** is a concrete, benchmarked job: "extract the key fields from a
-contract," "classify a support ticket," "moderate a comment." Pareta has
-measured open and frontier models against each task on real data — that
-catalog is what `"auto"` routes across. When your request matches a
-benchmarked task, the router knows exactly which open specialist holds
-frontier-grade quality on it. A task is the unit auto routes *by* and the unit
-you evaluate *against*.
+You never choose a model anywhere on Pareta — you choose the **data shape**,
+and each shape has exactly one interface:
+
+| Your data | Interface | Behind it |
+|---|---|---|
+| messages in, text out | `chat.completions` with `model="auto"` | the routing brain |
+| a query + documents to rank | [`rerank`](../reference/rerank.md) | a purpose-trained reranker |
+| text to turn into vectors | [`embeddings`](../reference/embeddings.md) | an open embedder that beats the frontier's |
+| audio in / audio out | [`audio`](../reference/audio.md) | the speech lanes |
+
+Within every shape, routing, model choice, and escalation are Pareta's job.
+The separate routes exist because vectors, ranked lists, and audio bytes
+don't fit the chat message contract — not because there is anything to
+navigate.
+
+## Tasks: grading contracts for evals
+
+Internally, `"auto"`'s quality guarantees come from a catalog of benchmarked
+jobs — Pareta has measured open and frontier models against each on real
+data. You don't navigate that catalog to use Pareta. You meet it in exactly
+one place: **benchmarking on your own data**, where a **task** is the
+grading contract — the row shape your dataset must follow and the scorer
+that grades outputs against your labels.
 
 Every task has a stable `id` (e.g. `"contract-key-fields"`), a
-`default_scorer` (the function that grades a model's output for that task), and
-a `has_blob_input` flag (true when the task takes documents or images, not just
-text).
+`default_scorer` (the function that grades a model's output — field-F1,
+nDCG@10, WER, judge panel), and a `has_blob_input` flag (true when the rows
+carry documents or images, not just text).
 
 **Python**
 
@@ -744,7 +763,7 @@ text).
 for task in pa.tasks.list():
     print(task.id, task.default_scorer, "blob" if task.has_blob_input else "text")
 
-# Fetch one task, optionally with sample rows to see its input shape
+# Fetch one contract, optionally with sample rows to see its input shape
 t = pa.tasks.retrieve("contract-key-fields", examples_n=3)
 print(t.id, t.default_scorer, t.has_blob_input)
 ```
@@ -756,60 +775,36 @@ for (const task of await pa.tasks.list()) {
   console.log(task.id, task.defaultScorer, task.hasBlobInput ? "blob" : "text");
 }
 
-// Fetch one task, optionally with sample rows to see its input shape
+// Fetch one contract, optionally with sample rows to see its input shape
 const t = await pa.tasks.retrieve("contract-key-fields", { examplesN: 3 });
 console.log(t.id, t.defaultScorer, t.hasBlobInput);
 ```
 
-"Can Pareta do X?" is a question you can ask directly: describe the job in
-plain English and `tasks.match` answers with one of four outcomes on `.type`:
-
-- `"task"` — a benchmarked task fits; `.chosen.task_id` names it and
-  `.candidates` carries ranked alternates.
-- `"capability"` — no specific task fits, but the work lands in a general
-  lane `"auto"` still covers (chat, coding, agentic, vision, speech-to-text,
-  text-to-speech); `.capability` describes the lane.
-- `"unsupported"` — the work is outside what Pareta does. A correct answer,
-  not an error; `.reasoning` explains why.
-- `"none"` — the reasoning router was unavailable and the lexical fallback
-  found nothing confident.
+Rather than reading the scorer list, describe your dataset in plain English
+and `tasks.match` names the contract that grades it:
 
 **Python**
 
 ```python
-m = pa.tasks.match("pull totals and dates out of vendor invoices", top_k=5)
-print(m.type)                        # "task" | "capability" | "unsupported" | "none"
-if m.type == "task":
-    print("best:", m.chosen.task_id, m.chosen.score, m.chosen.confidence)
-    for c in m.candidates:           # ranked alternates
-        print(c.task_id, c.score, c.confidence)
-elif m.type == "capability":
-    print("lane:", m.capability.id)  # chat / coding / agentic / vision / asr / tts
-elif m.type == "unsupported":
-    print(m.reasoning)               # why this is outside what Pareta does
+m = pa.tasks.match("vendor invoices with labeled line items and totals")
+if m.matched:
+    print("grade with:", m.chosen.task_id)   # -> evals.runs.create(task=...)
 ```
 
 **TypeScript**
 
 ```typescript
-const m = await pa.tasks.match("pull totals and dates out of vendor invoices", { topK: 5 });
+const m = await pa.tasks.match("vendor invoices with labeled line items and totals");
 if (m.matched && m.chosen) {
-  console.log("best:", m.chosen.taskId, m.chosen.score, m.chosen.confidence);
-} else {
-  for (const c of m.candidates) {        // ranked alternates to choose from
-    console.log(c.taskId, c.score, c.confidence);
-  }
+  console.log("grade with:", m.chosen.taskId);
 }
-console.log("outcome:", m.get("type"), "via", m.matcher);
 ```
 
-`match()` raises `ValueError` on an empty query. The matcher is an LLM
-reasoning router; `m.matcher` tells you which strategy answered (`"reason"`,
-or `"keyword"` on the lexical fallback). The richer fields (`.type`,
-`.capability`, `.reasoning`, `.confidence`) are typed properties on the Python
-`TaskMatch`; the TypeScript client reads them off the raw payload
-(`m.get("type")`). See [Tasks](../reference/tasks.md) for the full matcher
-surface.
+`match()` raises `ValueError` on an empty query. A no-match answer is a
+statement about *scoring* — no benchmarked contract fits that description —
+not about serving: generation work always goes to `model="auto"`. See
+[Tasks](../reference/tasks.md) for the full matcher surface.
+
 
 ## Open vs frontier models
 
@@ -1001,7 +996,7 @@ console.log(run.cost);          // "0.42": billed dollars (string), floored to c
 console.log(run.costMicroUsd);  // 420715: raw micro-USD
 ```
 
-## The discovery funnel
+## The proof funnel
 
 The pieces above compose into one path from "I have a job" to "auto is running
 it in production, cheaper." This is the recommended flow:
@@ -1010,7 +1005,7 @@ it in production, cheaper." This is the recommended flow:
 match  ->  eval on YOUR data  ->  model="auto" in production  ->  watch the metrics
 ```
 
-1. **Match** your intent to a task — "can Pareta do X?"
+1. **Match** your dataset to its grading contract (`tasks.match`).
 2. **Eval** `"auto"` against frontier baselines on *your own* data. Public
    benchmarks are a starting point; your rows are the deciding vote.
 3. **Ship** `model="auto"` — the same call, now carrying production traffic.
@@ -1024,7 +1019,7 @@ from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. Match free-text intent to a task
+# 1. Match your dataset to its grading contract
 match = pa.tasks.match("extract key fields from contracts")
 task = match.chosen.task_id
 
@@ -4148,7 +4143,7 @@ pareta tasks list                                                 # every benchm
 pareta tasks show contract-key-fields                             # one task's schema + default scorer
 ```
 
-`match` answers "can Pareta do X?" — it resolves free text to a benchmarked task, a capability lane, or an honest `unsupported`. `--top-k` (default 5) controls how many candidate tasks it considers.
+`match` resolves a free-text description of your dataset to the grading contract an eval scores it with (or a general lane, or no match — a statement about scoring, not serving). `--top-k` (default 5) controls how many candidate tasks it considers.
 
 ### `models` — the model catalog
 
@@ -7008,7 +7003,7 @@ The OpenAI SDK is built around calling a model you name. Pareta's reason to exis
 | --- | --- | --- |
 | Call a model | `client.chat.completions.create(...)` | works as-is (OpenAI-compatible) |
 | Benchmark `"auto"` vs frontier baselines on your data | not available | `pa.evals.runs.create(...)` |
-| Ask "can Pareta do X?" | not available | `pa.tasks.match(...)` |
+| Find the grading contract for your eval data | not available | `pa.tasks.match(...)` |
 | Watch requests, success rate, spend, projected savings | not available | `pa.auto.metrics()` |
 | Run one prompt against a frontier vendor, side-by-side | not available | `pa.auto.compare_frontier(...)` |
 | List callable model ids | `client.models.list()` (vendor catalog) | `pa.models.list()` (the single `"auto"` entry) |
@@ -7287,7 +7282,7 @@ for (const r of run.results) {
 
 ## Discovery: checking what auto covers
 
-"Can Pareta do X?" has a typed answer. `tasks.match(...)` maps free-text intent onto the benchmark catalog auto routes across — useful before you build, and for picking the `task` an eval run scores against. Again, no OpenAI equivalent:
+Benchmarking on your own data needs a grading contract, and `tasks.match(...)` finds it from a plain-English description of your dataset — the `task` an eval run validates rows against and scores with. Again, no OpenAI equivalent:
 
 **Python**
 
@@ -7730,7 +7725,7 @@ These hold no matter how you build the client. They are why there is no GPU knob
 
 - [Configuration](../guide/configuration.md) — the full configuration guide: `from_env`, `base_url`, timeouts, retries, custom transports, and the configuration cookbook.
 - [Inference](../guide/inference.md) — `chat.completions.create(model="auto", ...)`, streaming, and metering.
-- [tasks](./tasks.md) — browse the catalog and match intent: "can Pareta do X?".
+- [tasks](./tasks.md) — the grading contracts evals score against; `match` finds the right one for your dataset.
 - [Evaluation](../guide/evaluation.md) — benchmark `"auto"` on your own data, including `run.cost`.
 - [Errors and retries](../guide/errors-and-retries.md) — the `ParetaError` hierarchy and retry behavior.
 - [Async](../guide/async.md) — the sync-vs-async mapping for every resource.
@@ -8128,27 +8123,25 @@ except ParetaError as e:
 
 # tasks
 
-`client.tasks` is the catalog layer: the benchmarked jobs `model="auto"` routes
-across. You never pick a model — "which model?" is the question auto answers
-per request — but the catalog is how you ask, before sending traffic, whether
-Pareta covers your job at all:
+`client.tasks` is the **grading-contract directory** for evals. A task names
+how a dataset is scored: the input/output shape your rows must follow and the
+scorer that grades outputs against your labels (field-F1 for extraction,
+nDCG@10 for ranking, WER for transcripts, a judge panel for open-ended text).
 
-- `match` is the "can Pareta do X?" surface: it turns a plain-English
-  description of your job into an answer — a benchmarked task, a general
-  capability lane, or `"unsupported"`.
-- `list` / `retrieve` browse the benchmark catalog and a task's schema.
+You never need a task for inference. Production traffic is
+`chat.completions.create(model="auto", ...)` — it takes no task id, and every
+routing decision happens on Pareta's side. You need a task in exactly one
+moment: **when you benchmark on your own data**, because grading requires a
+declared contract — [`evals.runs.create(task=...)`](./evals.md) uses it to
+validate your rows and score every candidate the same way.
 
-Two platform facts run through everything here:
+- `match` maps a plain-English description of your dataset to the right
+  grading contract, so you don't read a scorer list.
+- `list` / `retrieve` browse the contracts and a contract's row schema.
 
-- **Task ids feed evals, not inference.** Inference is always
-  `chat.completions.create(model="auto", ...)`; it takes no task id. A matched
-  task id like `"contract-key-fields"` is what you hand to
-  [`evals.runs.create(task=...)`](./evals.md) to prove auto against the
-  frontier on your own rows.
-- **Catalog reads are free.** `list`, `retrieve`, and `match` are not metered.
-  The meter only starts when you run compute (inference and eval runs), which
-  is debited against your org balance. See [Errors](exceptions.md) for
-  `InsufficientCreditsError`.
+Catalog reads are free: `list`, `retrieve`, and `match` are not metered. The
+meter starts when you run compute (inference and eval runs). See
+[Errors](exceptions.md) for `InsufficientCreditsError`.
 
 All snippets assume:
 
@@ -8168,46 +8161,50 @@ def match(self, query: str, *, top_k: int = 5) -> TaskMatch
 
 **Route:** `POST /v1/tasks/match`
 
-Turns a free-text description of your intent into a single match. The matcher is
-an LLM reasoning router: it reasons about intent (not keyword overlap) and maps
-the query to exactly one of three outcomes — a benchmarked task, a general
-**capability** lane (chat, coding, agentic, vision, speech-to-text,
-text-to-speech), or `"unsupported"`. If the router is unavailable it falls back
-to a deterministic keyword scorer.
+Turns a free-text description of your data or job into the grading contract
+that fits it. The matcher is an LLM reasoning router: it reasons about intent
+(not keyword overlap). If the router is unavailable it falls back to a
+deterministic keyword scorer.
 
-- `query` (required): free-text intent. Raises `ValueError` if empty or
+- `query` (required): free-text description, e.g. `"vendor invoices with
+  labeled line items and totals"`. Raises `ValueError` if empty or
   whitespace-only.
-- `top_k` (default `5`): how many ranked candidates the keyword fallback returns.
-  The reasoning router returns a single chosen match (it does not rank).
+- `top_k` (default `5`): how many ranked candidates the keyword fallback
+  returns. The reasoning router returns a single chosen match (it does not
+  rank).
 
-Returns a [`TaskMatch`](#taskmatch). Branch on `match.type` to route every
-outcome; the reasoning router also fills `match.reasoning`, `match.confidence`,
-and `match.capability` (a typed [`Capability`](types.md#capability)).
+Returns a [`TaskMatch`](#taskmatch). Read `match.type` for the outcome:
+
+- `"task"` — a benchmarked grading contract fits; `.chosen.task_id` names it.
+- `"capability"` — the job is a general lane (chat, coding, vision, speech,
+  retrieval) rather than a labeled-dataset job; `.capability` describes it.
+  General lanes have judge- or metric-scored general tasks when you want to
+  benchmark them anyway.
+- `"unsupported"` / `"none"` — no grading contract fits the description.
+  This is a statement about *scoring*, not about serving: generation work
+  can always go to `model="auto"`.
 
 ```python
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
 
 if match.type == "task":
-    task_id = match.chosen.task_id          # the best task
-    print(f"matched {task_id} via {match.matcher} "
+    task_id = match.chosen.task_id          # the grading contract
+    print(f"grade with {task_id} via {match.matcher} "
           f"(confidence={match.confidence})")
 elif match.type == "capability":
-    cap = match.capability                  # typed Capability
-    print(f"general lane: {cap.label} ({cap.id})")
-else:                                       # "unsupported" / "none"
+    print(f"general lane: {match.capability.label}")
+else:
     print(f"{match.type}: {match.reasoning}")
-    for cand in match.candidates:           # keyword fallback may rank some
-        print(f"  {cand.task_id}  score={cand.score}  {cand.confidence}")
 ```
 
-A robust pattern handles both the no-match and the ambiguous cases rather than
-blindly trusting `chosen`:
+A robust pattern handles the no-match and ambiguous cases rather than blindly
+trusting `chosen`:
 
 ```python
 match = pa.tasks.match("classify support tickets by urgency")
 
 if not match.matched:
-    raise SystemExit(f"no task matched; closest: "
+    raise SystemExit(f"no contract matched; closest: "
                      f"{[c.task_id for c in match.candidates]}")
 if match.ambiguous:
     # Top two scores are close: a good moment to ask the user to disambiguate.
@@ -8217,9 +8214,9 @@ if match.ambiguous:
 task_id = match.chosen.task_id
 ```
 
-A matched `task_id` goes to [`evals.runs.create(task=task_id, ...)`](./evals.md)
-to prove auto on your own rows; inference itself stays `model="auto"` — there is
-nothing to switch once you know the job is covered.
+The matched `task_id` goes to
+[`evals.runs.create(task=task_id, ...)`](./evals.md); inference itself stays
+`model="auto"` — there is nothing to switch.
 
 ---
 
@@ -8231,14 +8228,16 @@ def retrieve(self, task_id: str, *, examples_n: int | None = None) -> Task
 
 **Route:** `GET /v1/tasks/{task_id}`
 
-Fetches a single task's schema. The field that matters most is `has_blob_input`:
-`True` means the task takes documents or images (PDFs, scans), which determines
-how you build eval sets and which frontier models can run it (vision-capable
-only).
+Fetches a single contract's row schema. The field that matters most is
+`has_blob_input`: `True` means the rows carry documents or images (PDFs,
+scans), which determines how you build eval sets and which frontier baselines
+can run them (vision-capable only).
 
-- `examples_n` (optional): request N example items from the task. The typed layer
-  surfaces `id`, `default_scorer`, and `has_blob_input`; reach the examples
-  through the raw record with `task.to_dict()`.
+- `examples_n` (optional): request N example rows from the task's bundled
+  golden set — the fastest way to see the exact input/expected shape your
+  rows must follow. The typed layer surfaces `id`, `default_scorer`, and
+  `has_blob_input`; reach the examples through the raw record with
+  `task.to_dict()`.
 
 Returns a [`Task`](#task).
 
@@ -8260,8 +8259,8 @@ def list(self) -> list[Task]
 
 **Route:** `GET /v1/tasks`
 
-Returns every benchmark task in the catalog as a `list[Task]`. Use this to browse
-when you do not have a free-text query to `match`.
+Returns every grading contract as a `list[Task]`. Use this to browse when you
+do not have a free-text query for `match`.
 
 ```python
 for task in pa.tasks.list():
@@ -8271,27 +8270,28 @@ for task in pa.tasks.list():
 
 ---
 
-## A full discovery pass
+## From dataset to proof
 
-End to end: intent in, a benchmarked task out, proven on your own rows — while
-inference stays `model="auto"` throughout.
+End to end: a description of your data in, a grading contract out, `"auto"`
+proven against the frontier on your own rows — while inference stays
+`model="auto"` throughout.
 
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. intent -> task
+# 1. dataset description -> grading contract
 match = pa.tasks.match("extract key fields from contracts")
 if not match.matched:
-    raise SystemExit(f"no task matched: {[c.task_id for c in match.candidates]}")
+    raise SystemExit(f"no contract matched: {[c.task_id for c in match.candidates]}")
 task_id = match.chosen.task_id
 
-# 2. inspect the task (document task? which scorer?)
+# 2. inspect the contract (document rows? which scorer?)
 task = pa.tasks.retrieve(task_id)
 print(f"task={task.id}  scorer={task.default_scorer}  blob={task.has_blob_input}")
 
-# 3. prove it: benchmark "auto" against the frontier on your own rows
+# 3. the proof: benchmark "auto" against the frontier on your own rows
 run = pa.evals.runs.create(
     task=task_id,
     items=[{"input": "…", "expected": {"effective_date": "2026-01-01"}}],
@@ -8305,8 +8305,8 @@ print("billed:", run.cost)
 ```
 
 There is nothing to switch on at the end of this pass: production traffic is
-the same `chat.completions.create(model="auto", ...)` call, and the eval is the
-proof it holds up on your data. To pick the vendor baselines to measure
+the same `chat.completions.create(model="auto", ...)` call, and the eval is
+the proof it holds up on your data. To pick the vendor baselines to measure
 against, see `evals.frontier_models` in [evals](./evals.md).
 
 ---
@@ -8328,7 +8328,7 @@ async def main():
         print(task.id, task.default_scorer, task.has_blob_input)
 
         catalog = await pa.tasks.list()
-        print(f"{len(catalog)} tasks in the catalog")
+        print(f"{len(catalog)} grading contracts")
 
 asyncio.run(main())
 ```
@@ -8350,7 +8350,7 @@ From `GET /v1/tasks` and `GET /v1/tasks/{id}`.
 |---|---|---|
 | `id` | `str \| None` | Task id, e.g. `"contract-key-fields"` |
 | `default_scorer` | `str \| None` | The scorer used to grade outputs on this task |
-| `has_blob_input` | `bool` | `True` if the task takes documents/images (vision tasks) |
+| `has_blob_input` | `bool` | `True` if the rows carry documents/images (vision tasks) |
 
 ### TaskMatch
 
@@ -8393,7 +8393,7 @@ See also: [evals](./evals.md) · [inference](../guide/inference.md) ·
 
 # `evals`: evaluate models on your own data
 
-`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task — the [grading contract](./tasks.md) that names your rows' shape and scorer (`tasks.match` finds it from a plain-English description of your dataset) — and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
 
 The namespace has three parts:
 
@@ -9164,8 +9164,8 @@ Two facts set this namespace apart from the rest of the SDK:
 - **Its own route, not `chat.completions`.** `embeddings(...)` hits
   `POST /v1/embeddings` directly (OpenAI-shaped request and response). You
   never pick a serving model or GPU; Pareta resolves the model behind the
-  lane (`bge-1` — BGE-large-en-v1.5, the same embedder the platform's own
-  retrieval pipelines run on).
+  lane (`qwen-embed-1` — Qwen3-Embedding-0.6B, the open embedder that beats
+  `text-embedding-3-large` on the measured CUAD recall benchmark).
 - **Metered per input token.** Each call debits your org balance by the
   tokens embedded — $0.01 per 1M tokens, 2× under OpenAI
   `text-embedding-3-small` and 13× under `3-large`. An empty balance raises
@@ -9181,7 +9181,7 @@ docs = ["Delaware law governs.", "30-day termination notice.", "Notices in writi
 doc_vecs = pa.embeddings(docs).vectors
 
 # Search side: embed the QUERY with input_type="query" — retrieval queries
-# embed differently from passages (BGE's query instruction).
+# embed differently from passages (the model's retrieval instruction).
 q = pa.embeddings("which state's law applies?", input_type="query").vectors[0]
 
 # Vectors are unit-normalized: cosine similarity is a plain dot product.
@@ -9218,7 +9218,7 @@ locally on empty input (before any network call).
 | Accessor | Type | Meaning |
 |---|---|---|
 | `.vectors` | `list[list[float]]` | Unit-normalized 1024-dim vectors, in your input order. |
-| `.model` | `str` | The lane's serving model (`bge-1`). |
+| `.model` | `str` | The lane's serving model (`qwen-embed-1`). |
 | `.prompt_tokens` | `int` | Tokens embedded — the metered unit. |
 | `len(result)` | `int` | Number of vectors. |
 
@@ -9732,7 +9732,7 @@ One element of a `ModelList`.
 
 ## Discovery types
 
-These come from the `tasks` namespace and answer "can Pareta do X?" before you
+These come from the `tasks` namespace and name the grading contract before you
 send traffic.
 
 ### Task
@@ -10007,7 +10007,7 @@ the 402; topping up is browser-only.
 ## See also
 
 - [Running inference](../guide/inference.md) — `ChatCompletion`, streaming chunks, and the async iterator form
-- [tasks](./tasks.md) — `Task` and `TaskMatch` in depth, and the "can Pareta do X?" flow
+- [tasks](./tasks.md) — `Task` and `TaskMatch` in depth, and the dataset-to-contract flow
 - [Evaluating models](../guide/evaluation.md) — building `EvalSet`s, running evals, and reading `EvalRun` cost
 - [Core concepts](../guide/core-concepts.md) — the auto story, hidden hardware, and metering, end to end
 

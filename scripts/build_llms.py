@@ -61,16 +61,16 @@ INTRO = (
     "verified, and falls back to a frontier model when that's the right call — "
     "one request, one bill. Its SDKs also let you benchmark `\"auto\"` against "
     "frontier models on your own data, read your auto traffic metrics, and "
-    "browse the per-task benchmark catalog (`tasks.match` answers \"can Pareta "
-    "do X?\"). Authenticate with a `pareta_sk_` key from the dashboard or the "
+    "find the grading contract that scores your eval data (`tasks.match`). "
+    "Authenticate with a `pareta_sk_` key from the dashboard or the "
     "`PARETA_API_KEY` environment variable."
 )
 
 # Pages EXCLUDED from the published docs set (llms.txt, llms-full.txt, and the
 # Docusaurus site). Founder decision, 2026-07-08 (auto-only surface):
 # deploy/endpoint/leaderboard docs are removed from publish entirely —
-# model:"auto" routes every request, and tasks.match answers "can Pareta do
-# X?". The source .md files stay on disk in sdk/docs/. This list must stay in
+# model:"auto" routes every request; tasks exist publicly only as eval
+# grading contracts (reframed 2026-07-10). The source .md files stay on disk in sdk/docs/. This list must stay in
 # sync with docs-site/sidebars.js and the docs-plugin `exclude` globs in
 # docs-site/docusaurus.config.js.
 EXCLUDED: frozenset[str] = frozenset({

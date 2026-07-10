@@ -297,7 +297,7 @@ These hold no matter how you build the client. They are why there is no GPU knob
 
 - [Configuration](../guide/configuration.md) — the full configuration guide: `from_env`, `base_url`, timeouts, retries, custom transports, and the configuration cookbook.
 - [Inference](../guide/inference.md) — `chat.completions.create(model="auto", ...)`, streaming, and metering.
-- [tasks](./tasks.md) — browse the catalog and match intent: "can Pareta do X?".
+- [tasks](./tasks.md) — the grading contracts evals score against; `match` finds the right one for your dataset.
 - [Evaluation](../guide/evaluation.md) — benchmark `"auto"` on your own data, including `run.cost`.
 - [Errors and retries](../guide/errors-and-retries.md) — the `ParetaError` hierarchy and retry behavior.
 - [Async](../guide/async.md) — the sync-vs-async mapping for every resource.

@@ -5,7 +5,7 @@ Exposes Pareta as Model Context Protocol tools over stdio, auto-first:
 - inference: `chat` (model:"auto" — the routing brain — by default)
 - proof: `run_eval` / `get_eval_run` (benchmark "auto" against frontier
   models on the user's own data), `auto_metrics`, `compare_frontier`
-- discovery: `match_task`, `list_tasks`, `get_task`, `list_models`
+- grading contracts (for evals): `match_task`, `list_tasks`, `get_task`; models: `list_models`
 - audio: `transcribe`, `speak`
 - retrieval: `rerank`, `embed`
 
@@ -89,18 +89,19 @@ def _guard(fn: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-# ── discovery ──────────────────────────────────────────────────────────────
+# ── grading contracts ──────────────────────────────────────────────────────────────
 @mcp.tool()
 @_guard
 def match_task(query: str, top_k: int = 5) -> dict[str, Any]:
-    """Resolve a free-text intent to a Pareta task, capability, or 'unsupported'.
+    """Find the grading contract for a dataset the user wants to benchmark.
 
-    Use this FIRST when the user describes what they want in plain language
-    (e.g. "extract fields from invoices"). Returns the router's outcome `type`
-    ('task' | 'capability' | 'unsupported' | 'none'), the chosen task id (when
-    a benchmarked task fits), the matched capability lane, and the reasoning.
-    Feed `chosen.task_id` into `run_eval` to prove model="auto" on the user's
-    own data; inference itself is just `chat` (model="auto").
+    Use this when the user wants to EVALUATE on their own data: a plain-English
+    description of the dataset (e.g. "invoices with labeled fields") returns the
+    task id whose scorer grades it. Returns the outcome `type` ('task' |
+    'capability' | 'unsupported' | 'none'), the chosen task id, the matched
+    lane, and the reasoning. Feed `chosen.task_id` into `run_eval`. NOT needed
+    for inference — send any generation job straight to `chat` (model="auto");
+    a no-match is a statement about scoring, not serving.
     """
     return _client().tasks.match(query, top_k=top_k).to_dict()
 

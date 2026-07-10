@@ -1,26 +1,24 @@
 # tasks
 
-`client.tasks` is the catalog layer: the benchmarked jobs `model="auto"` routes
-across. You never pick a model — "which model?" is the question auto answers
-per request — but the catalog is how you ask, before sending traffic, whether
-Pareta covers your job at all:
+`client.tasks` is the **grading-contract directory** for evals. A task names
+how a dataset is scored: the input/output shape your rows must follow and the
+scorer that grades outputs against your labels (field-F1 for extraction,
+nDCG@10 for ranking, WER for transcripts, a judge panel for open-ended text).
 
-- `match` is the "can Pareta do X?" surface: it turns a plain-English
-  description of your job into an answer — a benchmarked task, a general
-  capability lane, or `"unsupported"`.
-- `list` / `retrieve` browse the benchmark catalog and a task's schema.
+You never need a task for inference. Production traffic is
+`chat.completions.create(model="auto", ...)` — it takes no task id, and every
+routing decision happens on Pareta's side. You need a task in exactly one
+moment: **when you benchmark on your own data**, because grading requires a
+declared contract — [`evals.runs.create(task=...)`](./evals.md) uses it to
+validate your rows and score every candidate the same way.
 
-Two platform facts run through everything here:
+- `match` maps a plain-English description of your dataset to the right
+  grading contract, so you don't read a scorer list.
+- `list` / `retrieve` browse the contracts and a contract's row schema.
 
-- **Task ids feed evals, not inference.** Inference is always
-  `chat.completions.create(model="auto", ...)`; it takes no task id. A matched
-  task id like `"contract-key-fields"` is what you hand to
-  [`evals.runs.create(task=...)`](./evals.md) to prove auto against the
-  frontier on your own rows.
-- **Catalog reads are free.** `list`, `retrieve`, and `match` are not metered.
-  The meter only starts when you run compute (inference and eval runs), which
-  is debited against your org balance. See [Errors](exceptions.md) for
-  `InsufficientCreditsError`.
+Catalog reads are free: `list`, `retrieve`, and `match` are not metered. The
+meter starts when you run compute (inference and eval runs). See
+[Errors](exceptions.md) for `InsufficientCreditsError`.
 
 All snippets assume:
 
@@ -40,46 +38,50 @@ def match(self, query: str, *, top_k: int = 5) -> TaskMatch
 
 **Route:** `POST /v1/tasks/match`
 
-Turns a free-text description of your intent into a single match. The matcher is
-an LLM reasoning router: it reasons about intent (not keyword overlap) and maps
-the query to exactly one of three outcomes — a benchmarked task, a general
-**capability** lane (chat, coding, agentic, vision, speech-to-text,
-text-to-speech), or `"unsupported"`. If the router is unavailable it falls back
-to a deterministic keyword scorer.
+Turns a free-text description of your data or job into the grading contract
+that fits it. The matcher is an LLM reasoning router: it reasons about intent
+(not keyword overlap). If the router is unavailable it falls back to a
+deterministic keyword scorer.
 
-- `query` (required): free-text intent. Raises `ValueError` if empty or
+- `query` (required): free-text description, e.g. `"vendor invoices with
+  labeled line items and totals"`. Raises `ValueError` if empty or
   whitespace-only.
-- `top_k` (default `5`): how many ranked candidates the keyword fallback returns.
-  The reasoning router returns a single chosen match (it does not rank).
+- `top_k` (default `5`): how many ranked candidates the keyword fallback
+  returns. The reasoning router returns a single chosen match (it does not
+  rank).
 
-Returns a [`TaskMatch`](#taskmatch). Branch on `match.type` to route every
-outcome; the reasoning router also fills `match.reasoning`, `match.confidence`,
-and `match.capability` (a typed [`Capability`](types.md#capability)).
+Returns a [`TaskMatch`](#taskmatch). Read `match.type` for the outcome:
+
+- `"task"` — a benchmarked grading contract fits; `.chosen.task_id` names it.
+- `"capability"` — the job is a general lane (chat, coding, vision, speech,
+  retrieval) rather than a labeled-dataset job; `.capability` describes it.
+  General lanes have judge- or metric-scored general tasks when you want to
+  benchmark them anyway.
+- `"unsupported"` / `"none"` — no grading contract fits the description.
+  This is a statement about *scoring*, not about serving: generation work
+  can always go to `model="auto"`.
 
 ```python
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
 
 if match.type == "task":
-    task_id = match.chosen.task_id          # the best task
-    print(f"matched {task_id} via {match.matcher} "
+    task_id = match.chosen.task_id          # the grading contract
+    print(f"grade with {task_id} via {match.matcher} "
           f"(confidence={match.confidence})")
 elif match.type == "capability":
-    cap = match.capability                  # typed Capability
-    print(f"general lane: {cap.label} ({cap.id})")
-else:                                       # "unsupported" / "none"
+    print(f"general lane: {match.capability.label}")
+else:
     print(f"{match.type}: {match.reasoning}")
-    for cand in match.candidates:           # keyword fallback may rank some
-        print(f"  {cand.task_id}  score={cand.score}  {cand.confidence}")
 ```
 
-A robust pattern handles both the no-match and the ambiguous cases rather than
-blindly trusting `chosen`:
+A robust pattern handles the no-match and ambiguous cases rather than blindly
+trusting `chosen`:
 
 ```python
 match = pa.tasks.match("classify support tickets by urgency")
 
 if not match.matched:
-    raise SystemExit(f"no task matched; closest: "
+    raise SystemExit(f"no contract matched; closest: "
                      f"{[c.task_id for c in match.candidates]}")
 if match.ambiguous:
     # Top two scores are close: a good moment to ask the user to disambiguate.
@@ -89,9 +91,9 @@ if match.ambiguous:
 task_id = match.chosen.task_id
 ```
 
-A matched `task_id` goes to [`evals.runs.create(task=task_id, ...)`](./evals.md)
-to prove auto on your own rows; inference itself stays `model="auto"` — there is
-nothing to switch once you know the job is covered.
+The matched `task_id` goes to
+[`evals.runs.create(task=task_id, ...)`](./evals.md); inference itself stays
+`model="auto"` — there is nothing to switch.
 
 ---
 
@@ -103,14 +105,16 @@ def retrieve(self, task_id: str, *, examples_n: int | None = None) -> Task
 
 **Route:** `GET /v1/tasks/{task_id}`
 
-Fetches a single task's schema. The field that matters most is `has_blob_input`:
-`True` means the task takes documents or images (PDFs, scans), which determines
-how you build eval sets and which frontier models can run it (vision-capable
-only).
+Fetches a single contract's row schema. The field that matters most is
+`has_blob_input`: `True` means the rows carry documents or images (PDFs,
+scans), which determines how you build eval sets and which frontier baselines
+can run them (vision-capable only).
 
-- `examples_n` (optional): request N example items from the task. The typed layer
-  surfaces `id`, `default_scorer`, and `has_blob_input`; reach the examples
-  through the raw record with `task.to_dict()`.
+- `examples_n` (optional): request N example rows from the task's bundled
+  golden set — the fastest way to see the exact input/expected shape your
+  rows must follow. The typed layer surfaces `id`, `default_scorer`, and
+  `has_blob_input`; reach the examples through the raw record with
+  `task.to_dict()`.
 
 Returns a [`Task`](#task).
 
@@ -132,8 +136,8 @@ def list(self) -> list[Task]
 
 **Route:** `GET /v1/tasks`
 
-Returns every benchmark task in the catalog as a `list[Task]`. Use this to browse
-when you do not have a free-text query to `match`.
+Returns every grading contract as a `list[Task]`. Use this to browse when you
+do not have a free-text query for `match`.
 
 ```python
 for task in pa.tasks.list():
@@ -143,27 +147,28 @@ for task in pa.tasks.list():
 
 ---
 
-## A full discovery pass
+## From dataset to proof
 
-End to end: intent in, a benchmarked task out, proven on your own rows — while
-inference stays `model="auto"` throughout.
+End to end: a description of your data in, a grading contract out, `"auto"`
+proven against the frontier on your own rows — while inference stays
+`model="auto"` throughout.
 
 ```python
 from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. intent -> task
+# 1. dataset description -> grading contract
 match = pa.tasks.match("extract key fields from contracts")
 if not match.matched:
-    raise SystemExit(f"no task matched: {[c.task_id for c in match.candidates]}")
+    raise SystemExit(f"no contract matched: {[c.task_id for c in match.candidates]}")
 task_id = match.chosen.task_id
 
-# 2. inspect the task (document task? which scorer?)
+# 2. inspect the contract (document rows? which scorer?)
 task = pa.tasks.retrieve(task_id)
 print(f"task={task.id}  scorer={task.default_scorer}  blob={task.has_blob_input}")
 
-# 3. prove it: benchmark "auto" against the frontier on your own rows
+# 3. the proof: benchmark "auto" against the frontier on your own rows
 run = pa.evals.runs.create(
     task=task_id,
     items=[{"input": "…", "expected": {"effective_date": "2026-01-01"}}],
@@ -177,8 +182,8 @@ print("billed:", run.cost)
 ```
 
 There is nothing to switch on at the end of this pass: production traffic is
-the same `chat.completions.create(model="auto", ...)` call, and the eval is the
-proof it holds up on your data. To pick the vendor baselines to measure
+the same `chat.completions.create(model="auto", ...)` call, and the eval is
+the proof it holds up on your data. To pick the vendor baselines to measure
 against, see `evals.frontier_models` in [evals](./evals.md).
 
 ---
@@ -200,7 +205,7 @@ async def main():
         print(task.id, task.default_scorer, task.has_blob_input)
 
         catalog = await pa.tasks.list()
-        print(f"{len(catalog)} tasks in the catalog")
+        print(f"{len(catalog)} grading contracts")
 
 asyncio.run(main())
 ```
@@ -222,7 +227,7 @@ From `GET /v1/tasks` and `GET /v1/tasks/{id}`.
 |---|---|---|
 | `id` | `str \| None` | Task id, e.g. `"contract-key-fields"` |
 | `default_scorer` | `str \| None` | The scorer used to grade outputs on this task |
-| `has_blob_input` | `bool` | `True` if the task takes documents/images (vision tasks) |
+| `has_blob_input` | `bool` | `True` if the rows carry documents/images (vision tasks) |
 
 ### TaskMatch
 

@@ -1,6 +1,6 @@
 # `evals`: evaluate models on your own data
 
-`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task — the [grading contract](./tasks.md) that names your rows' shape and scorer (`tasks.match` finds it from a plain-English description of your dataset) — and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
 
 The namespace has three parts:
 

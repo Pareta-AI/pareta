@@ -69,7 +69,7 @@ The OpenAI SDK is built around calling a model you name. Pareta's reason to exis
 | --- | --- | --- |
 | Call a model | `client.chat.completions.create(...)` | works as-is (OpenAI-compatible) |
 | Benchmark `"auto"` vs frontier baselines on your data | not available | `pa.evals.runs.create(...)` |
-| Ask "can Pareta do X?" | not available | `pa.tasks.match(...)` |
+| Find the grading contract for your eval data | not available | `pa.tasks.match(...)` |
 | Watch requests, success rate, spend, projected savings | not available | `pa.auto.metrics()` |
 | Run one prompt against a frontier vendor, side-by-side | not available | `pa.auto.compare_frontier(...)` |
 | List callable model ids | `client.models.list()` (vendor catalog) | `pa.models.list()` (the single `"auto"` entry) |
@@ -348,7 +348,7 @@ for (const r of run.results) {
 
 ## Discovery: checking what auto covers
 
-"Can Pareta do X?" has a typed answer. `tasks.match(...)` maps free-text intent onto the benchmark catalog auto routes across — useful before you build, and for picking the `task` an eval run scores against. Again, no OpenAI equivalent:
+Benchmarking on your own data needs a grading contract, and `tasks.match(...)` finds it from a plain-English description of your dataset — the `task` an eval run validates rows against and scores with. Again, no OpenAI equivalent:
 
 **Python**
 

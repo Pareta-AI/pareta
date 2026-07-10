@@ -12,8 +12,8 @@ Two facts set this namespace apart from the rest of the SDK:
 - **Its own route, not `chat.completions`.** `embeddings(...)` hits
   `POST /v1/embeddings` directly (OpenAI-shaped request and response). You
   never pick a serving model or GPU; Pareta resolves the model behind the
-  lane (`bge-1` — BGE-large-en-v1.5, the same embedder the platform's own
-  retrieval pipelines run on).
+  lane (`qwen-embed-1` — Qwen3-Embedding-0.6B, the open embedder that beats
+  `text-embedding-3-large` on the measured CUAD recall benchmark).
 - **Metered per input token.** Each call debits your org balance by the
   tokens embedded — $0.01 per 1M tokens, 2× under OpenAI
   `text-embedding-3-small` and 13× under `3-large`. An empty balance raises
@@ -29,7 +29,7 @@ docs = ["Delaware law governs.", "30-day termination notice.", "Notices in writi
 doc_vecs = pa.embeddings(docs).vectors
 
 # Search side: embed the QUERY with input_type="query" — retrieval queries
-# embed differently from passages (BGE's query instruction).
+# embed differently from passages (the model's retrieval instruction).
 q = pa.embeddings("which state's law applies?", input_type="query").vectors[0]
 
 # Vectors are unit-normalized: cosine similarity is a plain dot product.
@@ -66,7 +66,7 @@ locally on empty input (before any network call).
 | Accessor | Type | Meaning |
 |---|---|---|
 | `.vectors` | `list[list[float]]` | Unit-normalized 1024-dim vectors, in your input order. |
-| `.model` | `str` | The lane's serving model (`bge-1`). |
+| `.model` | `str` | The lane's serving model (`qwen-embed-1`). |
 | `.prompt_tokens` | `int` | Tokens embedded — the metered unit. |
 | `len(result)` | `int` | Number of vectors. |
 

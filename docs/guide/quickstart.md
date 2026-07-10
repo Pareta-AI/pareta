@@ -50,10 +50,12 @@ The SDK only ever consumes a key. It never creates, lists, or revokes them, and
 it never exposes your balance or payment methods. Topping up credit is
 browser-only.
 
-## Ask what Pareta can do
+## Find the grading contract for your data
 
-There is no model to pick and nothing to deploy. The one question left is
-coverage — "can Pareta do X?" — and `tasks.match` answers it from a sentence:
+There is no model to pick and nothing to deploy — send any generation job
+straight to `model="auto"`. The one lookup you'll ever do is for
+benchmarking: `tasks.match` maps a plain-English description of your dataset
+to the grading contract an eval scores it with:
 
 **Python**
 

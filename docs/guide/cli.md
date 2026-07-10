@@ -64,7 +64,7 @@ pareta tasks list                                                 # every benchm
 pareta tasks show contract-key-fields                             # one task's schema + default scorer
 ```
 
-`match` answers "can Pareta do X?" — it resolves free text to a benchmarked task, a capability lane, or an honest `unsupported`. `--top-k` (default 5) controls how many candidate tasks it considers.
+`match` resolves a free-text description of your dataset to the grading contract an eval scores it with (or a general lane, or no match — a statement about scoring, not serving). `--top-k` (default 5) controls how many candidate tasks it considers.
 
 ### `models` — the model catalog
 

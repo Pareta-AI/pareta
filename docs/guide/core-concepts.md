@@ -2,10 +2,11 @@
 
 Pareta is one OpenAI-compatible endpoint with one model id: **`"auto"`**. This
 page covers the handful of ideas the rest of the SDK assumes you understand:
-the **routing brain** behind `model="auto"`, **tasks** (the benchmark catalog
-it routes across), **open vs frontier** models, why **models** and **hardware**
+the **routing brain** behind `model="auto"`, **one interface per data
+shape**, **tasks** (the grading contracts evals score against), **open vs
+frontier** models, why **models** and **hardware**
 are hidden, how **metering** works, and the **funnel** that ties them together
-(match your intent, prove `"auto"` on your data, ship it, watch the metrics).
+(prove `"auto"` on your data, ship it, watch the metrics).
 
 Every code block below is runnable as written. They all start from a client:
 
@@ -70,20 +71,36 @@ surfaces *around* that call live on `pa.auto`:
   token cost; a failed vendor call bills $0. Allowed models: `gpt-5.5`,
   `gemini-3-5-flash`, `gemini-3-1-pro`, `claude-sonnet-4-6`.
 
-## Tasks: the benchmark catalog
+## One interface per data shape
 
-A **task** is a concrete, benchmarked job: "extract the key fields from a
-contract," "classify a support ticket," "moderate a comment." Pareta has
-measured open and frontier models against each task on real data — that
-catalog is what `"auto"` routes across. When your request matches a
-benchmarked task, the router knows exactly which open specialist holds
-frontier-grade quality on it. A task is the unit auto routes *by* and the unit
-you evaluate *against*.
+You never choose a model anywhere on Pareta — you choose the **data shape**,
+and each shape has exactly one interface:
+
+| Your data | Interface | Behind it |
+|---|---|---|
+| messages in, text out | `chat.completions` with `model="auto"` | the routing brain |
+| a query + documents to rank | [`rerank`](../reference/rerank.md) | a purpose-trained reranker |
+| text to turn into vectors | [`embeddings`](../reference/embeddings.md) | an open embedder that beats the frontier's |
+| audio in / audio out | [`audio`](../reference/audio.md) | the speech lanes |
+
+Within every shape, routing, model choice, and escalation are Pareta's job.
+The separate routes exist because vectors, ranked lists, and audio bytes
+don't fit the chat message contract — not because there is anything to
+navigate.
+
+## Tasks: grading contracts for evals
+
+Internally, `"auto"`'s quality guarantees come from a catalog of benchmarked
+jobs — Pareta has measured open and frontier models against each on real
+data. You don't navigate that catalog to use Pareta. You meet it in exactly
+one place: **benchmarking on your own data**, where a **task** is the
+grading contract — the row shape your dataset must follow and the scorer
+that grades outputs against your labels.
 
 Every task has a stable `id` (e.g. `"contract-key-fields"`), a
-`default_scorer` (the function that grades a model's output for that task), and
-a `has_blob_input` flag (true when the task takes documents or images, not just
-text).
+`default_scorer` (the function that grades a model's output — field-F1,
+nDCG@10, WER, judge panel), and a `has_blob_input` flag (true when the rows
+carry documents or images, not just text).
 
 **Python**
 
@@ -91,7 +108,7 @@ text).
 for task in pa.tasks.list():
     print(task.id, task.default_scorer, "blob" if task.has_blob_input else "text")
 
-# Fetch one task, optionally with sample rows to see its input shape
+# Fetch one contract, optionally with sample rows to see its input shape
 t = pa.tasks.retrieve("contract-key-fields", examples_n=3)
 print(t.id, t.default_scorer, t.has_blob_input)
 ```
@@ -103,60 +120,36 @@ for (const task of await pa.tasks.list()) {
   console.log(task.id, task.defaultScorer, task.hasBlobInput ? "blob" : "text");
 }
 
-// Fetch one task, optionally with sample rows to see its input shape
+// Fetch one contract, optionally with sample rows to see its input shape
 const t = await pa.tasks.retrieve("contract-key-fields", { examplesN: 3 });
 console.log(t.id, t.defaultScorer, t.hasBlobInput);
 ```
 
-"Can Pareta do X?" is a question you can ask directly: describe the job in
-plain English and `tasks.match` answers with one of four outcomes on `.type`:
-
-- `"task"` — a benchmarked task fits; `.chosen.task_id` names it and
-  `.candidates` carries ranked alternates.
-- `"capability"` — no specific task fits, but the work lands in a general
-  lane `"auto"` still covers (chat, coding, agentic, vision, speech-to-text,
-  text-to-speech); `.capability` describes the lane.
-- `"unsupported"` — the work is outside what Pareta does. A correct answer,
-  not an error; `.reasoning` explains why.
-- `"none"` — the reasoning router was unavailable and the lexical fallback
-  found nothing confident.
+Rather than reading the scorer list, describe your dataset in plain English
+and `tasks.match` names the contract that grades it:
 
 **Python**
 
 ```python
-m = pa.tasks.match("pull totals and dates out of vendor invoices", top_k=5)
-print(m.type)                        # "task" | "capability" | "unsupported" | "none"
-if m.type == "task":
-    print("best:", m.chosen.task_id, m.chosen.score, m.chosen.confidence)
-    for c in m.candidates:           # ranked alternates
-        print(c.task_id, c.score, c.confidence)
-elif m.type == "capability":
-    print("lane:", m.capability.id)  # chat / coding / agentic / vision / asr / tts
-elif m.type == "unsupported":
-    print(m.reasoning)               # why this is outside what Pareta does
+m = pa.tasks.match("vendor invoices with labeled line items and totals")
+if m.matched:
+    print("grade with:", m.chosen.task_id)   # -> evals.runs.create(task=...)
 ```
 
 **TypeScript**
 
 ```typescript
-const m = await pa.tasks.match("pull totals and dates out of vendor invoices", { topK: 5 });
+const m = await pa.tasks.match("vendor invoices with labeled line items and totals");
 if (m.matched && m.chosen) {
-  console.log("best:", m.chosen.taskId, m.chosen.score, m.chosen.confidence);
-} else {
-  for (const c of m.candidates) {        // ranked alternates to choose from
-    console.log(c.taskId, c.score, c.confidence);
-  }
+  console.log("grade with:", m.chosen.taskId);
 }
-console.log("outcome:", m.get("type"), "via", m.matcher);
 ```
 
-`match()` raises `ValueError` on an empty query. The matcher is an LLM
-reasoning router; `m.matcher` tells you which strategy answered (`"reason"`,
-or `"keyword"` on the lexical fallback). The richer fields (`.type`,
-`.capability`, `.reasoning`, `.confidence`) are typed properties on the Python
-`TaskMatch`; the TypeScript client reads them off the raw payload
-(`m.get("type")`). See [Tasks](../reference/tasks.md) for the full matcher
-surface.
+`match()` raises `ValueError` on an empty query. A no-match answer is a
+statement about *scoring* — no benchmarked contract fits that description —
+not about serving: generation work always goes to `model="auto"`. See
+[Tasks](../reference/tasks.md) for the full matcher surface.
+
 
 ## Open vs frontier models
 
@@ -348,7 +341,7 @@ console.log(run.cost);          // "0.42": billed dollars (string), floored to c
 console.log(run.costMicroUsd);  // 420715: raw micro-USD
 ```
 
-## The discovery funnel
+## The proof funnel
 
 The pieces above compose into one path from "I have a job" to "auto is running
 it in production, cheaper." This is the recommended flow:
@@ -357,7 +350,7 @@ it in production, cheaper." This is the recommended flow:
 match  ->  eval on YOUR data  ->  model="auto" in production  ->  watch the metrics
 ```
 
-1. **Match** your intent to a task — "can Pareta do X?"
+1. **Match** your dataset to its grading contract (`tasks.match`).
 2. **Eval** `"auto"` against frontier baselines on *your own* data. Public
    benchmarks are a starting point; your rows are the deciding vote.
 3. **Ship** `model="auto"` — the same call, now carrying production traffic.
@@ -371,7 +364,7 @@ from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. Match free-text intent to a task
+# 1. Match your dataset to its grading contract
 match = pa.tasks.match("extract key fields from contracts")
 task = match.chosen.task_id
 
