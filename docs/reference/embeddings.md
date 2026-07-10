@@ -15,8 +15,8 @@ Two facts set this namespace apart from the rest of the SDK:
   lane (`qwen-embed-1` — Qwen3-Embedding-0.6B, the open embedder that beats
   `text-embedding-3-large` on the measured CUAD recall benchmark).
 - **Metered per input token.** Each call debits your org balance by the
-  tokens embedded — $0.01 per 1M tokens, 2× under OpenAI
-  `text-embedding-3-small` and 13× under `3-large`. An empty balance raises
+  tokens embedded — $0.004 per 1M tokens, 5× under OpenAI
+  `text-embedding-3-small` and 32× under `3-large`. An empty balance raises
   [`InsufficientCreditsError`](exceptions.md) (402).
 
 ```python
