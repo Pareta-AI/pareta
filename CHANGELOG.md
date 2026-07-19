@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-07-19
+
+- **Images lane**: `client.images.generate(prompt, size=?, seed=?)` →
+  `POST /v1/images/generations`, returning an `ImageGeneration` (`.image`
+  decoded PNG bytes, `.save(path)`, `.size`, `.model`). Billed FLAT per
+  image — every size costs the same; the `X-Pareta-Billed` header carries
+  the receipt.
+- CLI: `pareta image "prompt" --out fox.png --size 2048x2048 --seed 7`.
+- MCP: new `generate_image` tool (saves to disk — image bytes never enter
+  the agent's context).
+
 ## 1.1.1 — 2026-07-10
 
 - CLI: new `pareta rerank` and `pareta embed` commands — the Retrieval lanes

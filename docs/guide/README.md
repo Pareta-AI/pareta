@@ -17,6 +17,7 @@ Almost every example builds the client with `Pareta.from_env()`, which reads `PA
 9. [The `pareta` CLI](./cli.md) — the same surface as a shell command (`pip install "pareta[cli]"`): `chat`/`tasks`/`models`/`evals`/`auto`/`audio`, with `--json` everywhere.
 10. [MCP server](./mcp.md) — expose Pareta to an AI agent (Claude Code, Codex, Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`); set it up with `uvx`/`pipx`.
 11. [The `/pareta` skill](./skill.md) — a `SKILL.md` that drives the CLI as a slash command in Claude Code and Codex (same file works in both).
+12. [Connect OpenClaw to Pareta](./agent-openclaw.md) — point an OpenClaw agent at `/agent/v1` as its primary model: open-fleet turns with native tool calls, frontier escalation only when a turn earns it.
 
 ## Where to go next
 

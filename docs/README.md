@@ -114,6 +114,7 @@ Start-to-finish, in reading order — every page shows Python and TypeScript. Se
 - [The `pareta` CLI](./guide/cli.md) — the whole control plane as a shell command (`pip install "pareta[cli]"`), tables or `--json`.
 - [MCP server](./guide/mcp.md) — expose the control plane to an AI agent (Claude Code, Codex, Claude Desktop, Cursor) as tools (`pip install "pareta[mcp]"`).
 - [The `/pareta` skill](./guide/skill.md) — a `SKILL.md` that drives the CLI as a slash command in Claude Code and Codex.
+- [Connect OpenClaw to Pareta](./guide/agent-openclaw.md) — point an OpenClaw agent at `/agent/v1` as its primary model: open-fleet turns with native tool calls, frontier escalation when a turn earns it.
 
 ## Examples
 
@@ -139,3 +140,4 @@ Field-by-field API docs. Signatures are shown in Python; the TypeScript API mirr
 - [Exceptions](./reference/exceptions.md) — the `ParetaError` hierarchy and status-to-class mapping.
 - [Response types](./reference/types.md) — every response object plus the `.cost` vs `.costMicroUsd` money convention.
 - [Underlying HTTP API](./reference/http-api.md) — the `/v1` routes the SDK wraps (language-neutral).
+- [Agent API (`/agent/v1`)](./reference/agent-api.md) — the wire contract for agent runtimes (OpenClaw): fields, streaming, session pinning, billing, errors.

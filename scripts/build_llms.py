@@ -89,6 +89,7 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
         "installation", "quickstart", "core-concepts", "inference",
         "evaluation", "errors-and-retries",
         "async", "configuration", "cli", "mcp", "skill",
+        "agent-openclaw",   # GA'd with the agent lane (AGENT_LANE_SPEC AA-S4)
     ]),
     ("Examples", "examples", [
         "icd-coding", "retrieval", "extraction", "text-classification",
@@ -99,8 +100,8 @@ SECTIONS: list[tuple[str, str, list[str]]] = [
     ]),
     ("Reference", "reference", [
         "client", "chat", "models", "tasks", "evals", "audio",
-        "rerank", "embeddings",
-        "exceptions", "types", "http-api",
+        "images", "rerank", "embeddings",
+        "exceptions", "types", "http-api", "agent-api",
     ]),
 ]
 

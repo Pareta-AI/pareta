@@ -152,6 +152,7 @@ class Pareta(_BaseClient):
         from .resources.auto import Auto
         from .resources.rerank import RerankResource
         from .resources.embeddings import EmbeddingsResource
+        from .resources.images import Images
 
         self.chat = Chat(self)
         self.models = Models(self)
@@ -161,6 +162,7 @@ class Pareta(_BaseClient):
         self.auto = Auto(self)
         self.rerank = RerankResource(self)
         self.embeddings = EmbeddingsResource(self)
+        self.images = Images(self)
 
     # ── lifecycle ─────────────────────────────────────────────────────
     @classmethod
@@ -276,6 +278,7 @@ class AsyncPareta(_BaseClient):
         from .resources.auto import AsyncAuto
         from .resources.rerank import AsyncRerankResource
         from .resources.embeddings import AsyncEmbeddingsResource
+        from .resources.images import AsyncImages
 
         self.chat = AsyncChat(self)
         self.models = AsyncModels(self)
@@ -285,6 +288,7 @@ class AsyncPareta(_BaseClient):
         self.auto = AsyncAuto(self)
         self.rerank = AsyncRerankResource(self)
         self.embeddings = AsyncEmbeddingsResource(self)
+        self.images = AsyncImages(self)
 
     @classmethod
     def from_env(cls, **kwargs) -> "AsyncPareta":

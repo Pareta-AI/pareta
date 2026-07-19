@@ -1437,6 +1437,16 @@ for await (const chunk of stream) {
 console.log();
 ```
 
+## Reading the cost of a request
+
+Every completion tells you what it cost without any SDK: the
+`X-Pareta-Billed` response header is the debit in micro-USD, and
+`X-Pareta-Frontier-Would-Have-Cost` is what a single list-priced frontier
+call on the same prompt would have cost — each response carries its own
+savings receipt. Streamed responses deliver the same two numbers as SSE
+comment lines just before `[DONE]`. See the
+[HTTP API reference](../reference/http-api.md) for details.
+
 ## Handling metering and not-ready errors
 
 Two error cases are specific to running inference. Both subclass `ParetaError`, so a single `except ParetaError` is a fine catch-all; the specific classes let you branch.
@@ -4202,6 +4212,16 @@ pareta audio speak "Hello from Pareta" --out hello.wav      # text-to-speech (wr
 
 Both are metered per minute of audio.
 
+### `image` — text to image
+
+```bash
+pareta image "a red fox in the snow" --out fox.png                    # 1024x1024 default
+pareta image "wide product banner" --size 2560x1440 --seed 7          # pinned seed
+```
+
+Writes a PNG (default `image.png`). Billed FLAT per image — every size costs
+the same (the model renders at full 2K internally either way).
+
 ## Scripting
 
 Because every command takes `--json` and exits non-zero on failure, the CLI composes into shell pipelines and CI. For example, check that a job is routable, benchmark `auto` on your own rows, then run the real call:
@@ -4338,12 +4358,14 @@ The tools are grouped the same way as the SDK and CLI:
 - **Eval** — `run_eval`, `get_eval_run` (bring-your-own-data, metered). Pass `"auto"` among the candidate models to benchmark Pareta's routing itself against frontier baselines on your data.
 - **Auto** — `auto_metrics` (read-only, free) and `compare_frontier` (metered: one prompt against a frontier vendor for a side-by-side with `chat`).
 - **Audio** — `transcribe`, `speak` (metered per minute).
+- **Retrieval** — `rerank` (metered per document scored), `embed` (metered per input token).
+- **Images** — `generate_image` (metered flat per image). Saves the PNG to a path you give it — the bytes never enter the agent's context.
 
 A typical agent flow: `match_task("pull the key fields out of contracts")` → `run_eval(models=["auto"], task, items)` → `chat(prompt)`.
 
 ## Spending money is gated by your client's approval
 
-Some tools cost money: `chat` / `run_eval` / `compare_frontier` / `transcribe` / `speak` debit your org balance. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which rows, which prompt) before approving a metered call. Tool errors — a missing key, an out-of-credit balance — come back as a clean `{"error": …}` message the agent can read, not a crash.
+Some tools cost money: `chat` / `run_eval` / `compare_frontier` / `transcribe` / `speak` / `rerank` / `embed` / `generate_image` debit your org balance. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which rows, which prompt) before approving a metered call. Tool errors — a missing key, an out-of-credit balance — come back as a clean `{"error": …}` message the agent can read, not a crash.
 
 ## Next steps
 
@@ -4417,6 +4439,99 @@ It bakes in the guardrails: inference / eval / compare **spend your org balance*
 - [MCP server](mcp.md) — the tools-over-a-server alternative (Claude Code, Codex, Claude Desktop, Cursor).
 - [The `pareta` CLI](cli.md) — the command surface the skill drives.
 - [Installation & authentication](installation.md) — install the CLI and mint a `pareta_sk_` key.
+
+
+
+---
+
+<!-- guide/agent-openclaw.md -->
+
+# Connect OpenClaw to Pareta
+
+Pareta's Agent Auto endpoint is OpenAI-compatible on the wire. Point OpenClaw — or any agent runtime that speaks the OpenAI chat completions API — at it, set the model to `auto`, and Pareta handles the rest: it routes each turn to the right model, escalates to a frontier model on the turns that need it, and bills one debit per turn.
+
+You don't pick a model, a GPU, or a provider. `auto` is the whole product.
+
+## The three values
+
+Point your runtime's OpenAI-compatible provider at:
+
+| Setting | Value |
+| --- | --- |
+| Base URL | `https://api.pareta.ai/agent/v1` |
+| API key | your `pareta_sk_…` key (mint one in the dashboard) |
+| Model | `auto` |
+
+That's the entire integration. Everything else — your system prompt, the full message history, your tool schemas — flows through unchanged.
+
+## What Pareta does per turn
+
+- **One endpoint, one model string.** `model` is the literal string `"auto"`. Pareta reads the shape of each turn and routes it to the right fleet member — general reasoning, coding, or vision — behind that one string. Real model ids never reach you.
+- **Full transcript and tools pass through.** Your system prompt, the whole conversation, and your OpenAI-shape `tools` go straight to the chosen model; `tool_calls` come back in the same shape. Nothing is dropped, summarized, or rewritten — the model's output *is* the answer.
+- **A frontier floor.** When a turn comes back low-confidence, Pareta re-runs *that turn* on a frontier model (with your tools intact) and returns it as the answer. You get open-weights price on the turns the open fleet handles well, and frontier quality only on the turns that earn it.
+- **One debit per turn.** A turn bills once no matter how Pareta routed or escalated it; a turn that errors bills nothing. The `X-Pareta-Billed` response header carries the amount in micro-USD.
+- **131,072-token context**, streaming, and tool calling are all supported.
+
+## Connect with the OpenAI SDK
+
+Any OpenAI-compatible client connects the same way OpenClaw does under the hood — set the base URL and key, then call chat completions with `model="auto"`:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.pareta.ai/agent/v1",
+    api_key="pareta_sk_…",
+)
+
+resp = client.chat.completions.create(
+    model="auto",
+    messages=[
+        {"role": "system", "content": "You are a coding agent."},
+        {"role": "user", "content": "List the files in the repo, then summarize the README."},
+    ],
+    tools=[
+        {"type": "function", "function": {
+            "name": "run_shell",
+            "description": "Run a shell command in the workspace.",
+            "parameters": {"type": "object",
+                           "properties": {"cmd": {"type": "string"}},
+                           "required": ["cmd"]}}},
+    ],
+    tool_choice="auto",
+)
+print(resp.choices[0].message.tool_calls)
+```
+
+Feed the tool results back as `role: "tool"` messages on the next call, exactly as you would with any OpenAI-compatible model. The conversation carries; Pareta keeps routing each turn.
+
+## Connect with raw HTTP
+
+```bash
+curl https://api.pareta.ai/agent/v1/chat/completions \
+  -H "Authorization: Bearer pareta_sk_…" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "What is the weather in Paris? Use the tool."}],
+    "tools": [{"type": "function", "function": {
+      "name": "get_weather",
+      "parameters": {"type": "object",
+                     "properties": {"city": {"type": "string"}},
+                     "required": ["city"]}}}],
+    "tool_choice": "auto"
+  }'
+```
+
+## In OpenClaw
+
+OpenClaw configures models through OpenAI-compatible providers. Add Pareta as a provider with the base URL and key above, and set the model to `auto` for any role you want Pareta to serve — the primary model, a subagent, or a utility model. Because `auto` routes per turn, one Pareta provider entry covers coding, general reasoning, and vision without you wiring up separate models.
+
+For a copy-pasteable `openclaw.json` provider block and the full wire contract — request fields, session pinning, streaming shape, the billing header, and error codes — see the [Agent API reference](../reference/agent-api.md).
+
+## How this differs from `/v1`
+
+Pareta's `/v1` chat endpoint is the one-shot **task** lane: send a request, get one synthesized answer. `/agent/v1` is the **conversation-and-tools** lane for agent loops — it passes your transcript and tools through verbatim, turn after turn, and pins a conversation to a consistent route. Same API key, same one-debit-per-turn billing, same `auto` model string. Use `/agent/v1` when a runtime like OpenClaw is driving a multi-turn tool loop.
 
 
 
@@ -10193,6 +10308,94 @@ From `audio.speech`.
 
 ---
 
+<!-- reference/images.md -->
+
+# images
+
+`client.images` is the image-generation surface: turn a text prompt into a
+PNG. It exposes the `image-gen` **capability lane** as one method:
+
+- [`images.generate`](#imagesgenerate): generate an image from a prompt and
+  save it to a file.
+
+Two facts set this namespace apart from the rest of the SDK:
+
+- **Its own route, not `chat.completions`.** Generation hits
+  `POST /v1/images/generations` directly. You never pick a serving model, a
+  GPU, or a step count; Pareta resolves the lane (`hidream-1` today), exactly
+  as `model="auto"` does for chat.
+- **Metered flat per image.** Every generation debits the same per-image
+  price against your org balance — the model renders at full 2K quality
+  internally regardless of the delivery size, so every size costs the same.
+  The `X-Pareta-Billed` response header carries the receipt in micro-USD. An
+  empty balance raises [`InsufficientCreditsError`](exceptions.md) (402).
+
+Calls go through the client's transport, so auth, retries, and typed error
+mapping apply exactly as they do everywhere else.
+
+All examples use the synchronous `Pareta` client. The method has an `async`
+twin with the same signature on `AsyncPareta`.
+
+```python
+from pareta import Pareta
+
+pa = Pareta.from_env()   # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
+img = pa.images.generate("a lighthouse on a rocky coast at dusk")
+img.save("lighthouse.png")
+img.size                        # "1024x1024" — the ACTUAL delivered size
+```
+
+```typescript
+import { Pareta } from "pareta";
+
+const pa = Pareta.fromEnv();
+const img = await pa.images.generate("a lighthouse on a rocky coast at dusk");
+await img.save("lighthouse.png");            // decoded bytes (Node)
+```
+
+---
+
+## images.generate
+
+```python
+pa.images.generate(prompt, *, size=None, seed=None) -> ImageGeneration
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `prompt` | `str` | What to render. Required, ≤4000 chars. |
+| `size` | `str \| None` | Delivery size. Omit for `1024x1024`. Also: `2048x2048`, `2304x1728`, `1728x2304`, `2560x1440`, `1440x2560`. Every size bills the same flat price. |
+| `seed` | `int \| None` | Pin the noise seed for reproducibility. |
+
+TypeScript: `pa.images.generate(prompt, { size?, seed? })`.
+
+A generation takes ~15s when the lane is warm; the first request after a
+quiet spell can take a few minutes while the model boots.
+
+## The ImageGeneration object
+
+| Accessor | Type | Description |
+|---|---|---|
+| `.image` | `bytes` / `Uint8Array` | The generated image, base64-decoded PNG bytes. |
+| `.b64_json` / `.b64Json` | `str \| None` | The raw base64 payload. |
+| `.size` | `str \| None` | The actual delivered size (e.g. `"1024x1024"`). |
+| `.model` | `str \| None` | The lane's public model name (`hidream-1`). |
+| `.created` | `int \| None` | Unix timestamp. |
+| `.save(path)` | — | Write the PNG to `path`. Returns the object for chaining. |
+
+## CLI
+
+```bash
+pareta image "a red fox in the snow" --out fox.png --size 2048x2048
+```
+
+Billed flat per image — the table in [`pareta --help`](../guide/cli.md) lists
+the options.
+
+
+
+---
+
 <!-- reference/rerank.md -->
 
 # rerank
@@ -11322,6 +11525,34 @@ curl https://api.pareta.ai/v1/chat/completions \
   }'
 ```
 
+#### Cost receipt headers
+
+Every non-streamed completion carries its own receipt (micro-USD integers,
+same unit as the agent lane's billing header):
+
+| Header | Meaning |
+| --- | --- |
+| `X-Pareta-Billed` | What this request debited. Follows the ledger exactly — an idempotent retry (same `Idempotency-Key`) that replays a prior debit reads `0`. |
+| `X-Pareta-Frontier-Would-Have-Cost` | The counterfactual: what one list-priced frontier call on the same prompt would have cost. Billed vs. this is your per-request savings. |
+
+```bash
+curl -si https://api.pareta.ai/v1/chat/completions ... | grep -i x-pareta
+# x-pareta-billed: 653
+# x-pareta-frontier-would-have-cost: 11795
+```
+
+Streamed responses carry the same two numbers as SSE comment lines right
+before `data: [DONE]` (comments are invisible to OpenAI SDK parsers, so
+stock clients are unaffected):
+
+```
+: pareta-billed-micro-usd 653
+
+: pareta-frontier-would-have-cost-micro-usd 11795
+
+data: [DONE]
+```
+
 #### Streaming
 
 Set `"stream": true`. The response is a data-only SSE stream in vLLM format:
@@ -11758,4 +11989,153 @@ asyncio.run(main())
 - [Errors, retries & timeouts](../guide/errors-and-retries.md) — the full exception hierarchy
 - [Async](../guide/async.md) — the `AsyncPareta` client end to end
 - [Configuration](../guide/configuration.md) — base URL, keys, timeout, and retry budget
+
+
+
+---
+
+<!-- reference/agent-api.md -->
+
+# Agent API (`/agent/v1`) — OpenClaw and agent runtimes
+
+The wire reference for Pareta's agent surface: an OpenAI-compatible chat
+completions endpoint built for multi-turn tool loops. If you want the
+narrative version — what the lane does per turn and why — read
+[Connect OpenClaw to Pareta](../guide/agent-openclaw.md) first; this page is
+the contract.
+
+Base URL: `https://api.pareta.ai/agent/v1`. Authentication is a Bearer
+`pareta_sk_…` key on every request, same as `/v1`.
+
+## `GET /agent/v1/models`
+
+Returns the one model the surface serves. Agent runtimes that size their
+context accounting from `/models` (OpenClaw, Hermes) read the vLLM-style
+extension fields.
+
+```json
+{
+  "object": "list",
+  "data": [{
+    "id": "auto",
+    "object": "model",
+    "owned_by": "pareta",
+    "created": 1784130000,
+    "max_model_len": 131072,
+    "context_window": 131072
+  }]
+}
+```
+
+## `POST /agent/v1/chat/completions`
+
+One conversation turn. The transcript and tool schemas pass through to a
+turn-routed fleet member verbatim; the response comes back in OpenAI shape
+with `model: "auto"`.
+
+### Request body
+
+| Field | Behavior |
+| --- | --- |
+| `model` | `"auto"` or omitted. Any other value → `400`. |
+| `messages` | Full transcript — `system`, `user`, `assistant` (including prior `tool_calls`), and `tool` results all pass through. Nothing is dropped or rewritten. |
+| `tools`, `tool_choice`, `parallel_tool_calls` | OpenAI function-calling shape, passed through; `tool_calls` come back in the same shape. |
+| `stream`, `stream_options` | SSE streaming (below). `include_usage` is forced on — the final chunk always carries `usage`. |
+| `temperature`, `top_p`, `max_tokens`, `max_completion_tokens`, `stop`, `seed`, `presence_penalty`, `frequency_penalty`, `logprobs`, `top_logprobs`, `response_format` | Forwarded verbatim — the agent owns its sampling. `max_tokens` defaults to 8192 when omitted. |
+| `n` | Only `1` (or omitted). `n > 1` → `400`. |
+| anything else | Ignored, never a `400` — runtimes that attach vendor `extra_body` fields work unmodified. |
+
+Context window: **131,072 tokens** per turn.
+
+### Request headers
+
+| Header | Behavior |
+| --- | --- |
+| `Authorization` | `Bearer pareta_sk_…` — required. |
+| `Idempotency-Key` | Optional. A retried turn with the same key bills once. |
+| `X-Pareta-Session` | Optional explicit conversation id. Pareta pins a conversation's route so consecutive turns don't re-derive routing (and an escalation can stick); without this header the pin key is derived from your org + system prompt + tool-schema names — the stable prefix agent runtimes re-send every turn. Pins expire after ~30 minutes idle; a modality change (an image turn in a text conversation) re-routes. |
+
+### Response
+
+A standard OpenAI chat completion. `model` is always `"auto"` — real model
+ids never appear anywhere in the response. `usage` carries prompt and
+completion tokens.
+
+| Header | Meaning |
+| --- | --- |
+| `X-Pareta-Billed` | The turn's debit in micro-USD (non-streamed responses). A turn bills once no matter how it was routed or escalated; a failed turn bills nothing. |
+
+### Streaming
+
+Set `"stream": true`. The response is `text/event-stream` with OpenAI chunk
+deltas — `tool_calls` stream in OpenAI shape — followed by a final chunk
+carrying `usage`, then `data: [DONE]`.
+
+### Routing and escalation
+
+Every turn is routed by shape behind the single `auto` string: general
+reasoning, coding, or vision. A turn that comes back low-confidence is re-run
+on a frontier model **with your tools intact** and that answer is returned;
+conversations that escalate repeatedly pin to the frontier route. None of
+this changes the wire shape or the one-debit-per-turn billing.
+
+### Errors
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Malformed JSON body, `model` other than `"auto"`, or `n > 1`. |
+| `401` | Missing or invalid API key. |
+| `402` | Insufficient balance. |
+| `404` | The agent surface is not enabled. |
+| `502` | The turn could not be completed (never a raw 500). |
+| `503` | Temporarily unavailable — retry after the `Retry-After` header (30s). |
+
+## OpenClaw provider block
+
+OpenClaw configures models through OpenAI-compatible providers in
+`~/.openclaw/openclaw.json`. This is a working provider entry (field names
+can drift across OpenClaw versions — the three values that matter are the
+base URL, the key, and `model: auto`):
+
+```json
+{
+  "models": {
+    "providers": {
+      "pareta": {
+        "baseUrl": "https://api.pareta.ai/agent/v1",
+        "apiKey": "pareta_sk_…",
+        "api": "openai-completions",
+        "models": [{
+          "id": "auto",
+          "name": "Pareta Auto",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 8192
+        }]
+      }
+    }
+  }
+}
+```
+
+Then point any agent role at it — as the primary model, keep a local
+fallback if you like:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "pareta/auto",
+        "fallbacks": ["ollama/gpt-oss:120b"]
+      }
+    }
+  }
+}
+```
+
+Restart the OpenClaw gateway and every turn — chat, tool calls, images —
+routes through Pareta. Because `auto` routes per turn, this one provider
+entry covers coding, general reasoning, and vision; there is nothing else to
+wire up.
 

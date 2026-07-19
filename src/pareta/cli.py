@@ -637,5 +637,32 @@ def audio_speak(
     _out.print(f"[green]wrote[/green] {dest}  ({_dash(speech.duration_s)}s)")
 
 
+# ── images ───────────────────────────────────────────────────────────────
+@app.command("image")
+def image(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(..., help="Text prompt describing the image."),
+    size: Optional[str] = typer.Option(None, "--size", help="Delivery size, e.g. 1024x1024 (default), 2048x2048, 2560x1440."),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Pin the noise seed for reproducibility."),
+    out: Optional[str] = typer.Option(None, "--out", help="Output file (default: image.png)."),
+) -> None:
+    """Generate an image from a prompt and write it to a file.
+    Billed FLAT per image — every size costs the same."""
+    state = _state(ctx)
+    try:
+        result = _client().images.generate(prompt, size=size, seed=seed)
+    except ValueError as e:
+        _err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=2)
+    except ParetaError as e:
+        raise _fail(e)
+    dest = out or "image.png"
+    result.save(dest)
+    if state.json:
+        _emit_json({"file": dest, "size": result.size, "model": result.model})
+        return
+    _out.print(f"[green]wrote[/green] {dest}  ({result.size}, {result.model})")
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

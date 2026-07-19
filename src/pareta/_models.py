@@ -389,6 +389,46 @@ class Embeddings(_Base):
         return len(self._raw.get("data", []))
 
 
+class ImageGeneration(_Base):
+    """Image result from `images.generate(...)`. `.image` is the decoded PNG
+    bytes (use `.save(path)` to write a file); `.size` is the ACTUAL delivered
+    size. Billed flat per image (the `X-Pareta-Billed` response header carries
+    the receipt; every size costs the same)."""
+
+    @property
+    def image(self) -> bytes:
+        """The generated image, base64-decoded to raw PNG bytes."""
+        b64 = self.b64_json or ""
+        from base64 import b64decode
+
+        return b64decode(b64) if b64 else b""
+
+    @property
+    def b64_json(self) -> str | None:
+        data = self._raw.get("data") or []
+        return data[0].get("b64_json") if data else None
+
+    @property
+    def size(self) -> str | None:
+        return self._raw.get("size")
+
+    @property
+    def model(self) -> str | None:
+        return self._raw.get("model")
+
+    @property
+    def created(self) -> int | None:
+        return self._raw.get("created")
+
+    def save(self, path) -> "ImageGeneration":
+        """Write the decoded PNG bytes to `path` (str or os.PathLike).
+        Returns self for chaining."""
+        from pathlib import Path
+
+        Path(path).write_bytes(self.image)
+        return self
+
+
 # ── evals ─────────────────────────────────────────────────────────────
 class EvalSet(_Base):
     @property

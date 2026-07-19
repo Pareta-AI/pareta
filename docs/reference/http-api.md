@@ -152,6 +152,34 @@ curl https://api.pareta.ai/v1/chat/completions \
   }'
 ```
 
+#### Cost receipt headers
+
+Every non-streamed completion carries its own receipt (micro-USD integers,
+same unit as the agent lane's billing header):
+
+| Header | Meaning |
+| --- | --- |
+| `X-Pareta-Billed` | What this request debited. Follows the ledger exactly — an idempotent retry (same `Idempotency-Key`) that replays a prior debit reads `0`. |
+| `X-Pareta-Frontier-Would-Have-Cost` | The counterfactual: what one list-priced frontier call on the same prompt would have cost. Billed vs. this is your per-request savings. |
+
+```bash
+curl -si https://api.pareta.ai/v1/chat/completions ... | grep -i x-pareta
+# x-pareta-billed: 653
+# x-pareta-frontier-would-have-cost: 11795
+```
+
+Streamed responses carry the same two numbers as SSE comment lines right
+before `data: [DONE]` (comments are invisible to OpenAI SDK parsers, so
+stock clients are unaffected):
+
+```
+: pareta-billed-micro-usd 653
+
+: pareta-frontier-would-have-cost-micro-usd 11795
+
+data: [DONE]
+```
+
 #### Streaming
 
 Set `"stream": true`. The response is a data-only SSE stream in vLLM format:

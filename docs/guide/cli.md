@@ -123,6 +123,16 @@ pareta audio speak "Hello from Pareta" --out hello.wav      # text-to-speech (wr
 
 Both are metered per minute of audio.
 
+### `image` — text to image
+
+```bash
+pareta image "a red fox in the snow" --out fox.png                    # 1024x1024 default
+pareta image "wide product banner" --size 2560x1440 --seed 7          # pinned seed
+```
+
+Writes a PNG (default `image.png`). Billed FLAT per image — every size costs
+the same (the model renders at full 2K internally either way).
+
 ## Scripting
 
 Because every command takes `--json` and exits non-zero on failure, the CLI composes into shell pipelines and CI. For example, check that a job is routable, benchmark `auto` on your own rows, then run the real call:

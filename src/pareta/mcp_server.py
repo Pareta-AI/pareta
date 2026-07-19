@@ -8,6 +8,7 @@ Exposes Pareta as Model Context Protocol tools over stdio, auto-first:
 - grading contracts (for evals): `match_task`, `list_tasks`, `get_task`; models: `list_models`
 - audio: `transcribe`, `speak`
 - retrieval: `rerank`, `embed`
+- images: `generate_image` (saves to disk — bytes never enter context)
 
 The agent calls these tools; the MCP client gates each call behind its own
 per-tool approval, which is the only guardrail on the metered verbs (chat,
@@ -275,6 +276,19 @@ def embed(texts: list[str], input_type: str | None = None) -> dict[str, Any]:
     input token."""
     result = _client().embeddings(texts, input_type=input_type)
     return {"vectors": result.vectors, "prompt_tokens": result.prompt_tokens}
+
+
+@mcp.tool()
+@_guard
+def generate_image(prompt: str, path: str, size: str | None = None) -> dict[str, Any]:
+    """Generate one image from a text prompt and SAVE it to `path` (.png) —
+    the image bytes are written to disk, not returned (they would not fit in
+    context). `size` e.g. "1024x1024" (default) or "2560x1440"; every size
+    bills the same FLAT per-image price. METERED per image. Returns
+    {"path", "size", "model"}."""
+    result = _client().images.generate(prompt, size=size)
+    result.save(path)
+    return {"path": path, "size": result.size, "model": result.model}
 
 
 def main() -> None:

@@ -13,6 +13,7 @@ Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the 
 - [tasks](./tasks.md) — `client.tasks`: `list`/`retrieve`/`match` with the `Task`/`TaskMatch` response models.
 - [evals](./evals.md) — `client.evals`: `sets`, `runs`, and `frontier_models`, with `frontier=` resolution, metering, and response-object tables.
 - [audio](./audio.md) — `client.audio`: `transcriptions` (speech-to-text) and `speech` (text-to-speech), the per-minute metering, and the `Transcription`/`Speech` response objects.
+- [images](./images.md) — `client.images`: `generate` (text-to-image), the flat per-image metering, and the `ImageGeneration` response object.
 - [rerank](./rerank.md) — `client.rerank`: rank documents by relevance to a query (per-document metering, calibrated scores, the `Rerank` response object).
 - [embeddings](./embeddings.md) — `client.embeddings`: unit-normalized text vectors for search/RAG recall (per-token metering, query vs document embedding, the `Embeddings` response object).
 
@@ -24,6 +25,7 @@ Field-by-field API docs for the Pareta SDK. Signatures are shown in Python; the 
 ## Transport
 
 - [Underlying HTTP API](./http-api.md) — a per-method map of the `/v1` routes the SDK wraps (chat/completions, models, tasks+match, auto metrics + frontier compare, eval frontier-models, eval-sets, eval-runs) with method, path, Bearer auth, request/response shapes, and sync/async + curl examples.
+- [Agent API (`/agent/v1`)](./agent-api.md) — the wire contract for agent runtimes (OpenClaw): request/response fields, session pinning, streaming, billing header, errors, and a working OpenClaw provider block.
 
 ## See also
 

@@ -264,6 +264,16 @@ for await (const chunk of stream) {
 console.log();
 ```
 
+## Reading the cost of a request
+
+Every completion tells you what it cost without any SDK: the
+`X-Pareta-Billed` response header is the debit in micro-USD, and
+`X-Pareta-Frontier-Would-Have-Cost` is what a single list-priced frontier
+call on the same prompt would have cost — each response carries its own
+savings receipt. Streamed responses deliver the same two numbers as SSE
+comment lines just before `[DONE]`. See the
+[HTTP API reference](../reference/http-api.md) for details.
+
 ## Handling metering and not-ready errors
 
 Two error cases are specific to running inference. Both subclass `ParetaError`, so a single `except ParetaError` is a fine catch-all; the specific classes let you branch.

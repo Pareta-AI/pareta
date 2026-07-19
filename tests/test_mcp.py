@@ -89,6 +89,9 @@ def test_server_object_exists():
 async def test_registers_expected_tools():
     tools = await mcp_server.mcp.list_tools()
     names = {t.name for t in tools}
+    # RULE: register an MCP tool in mcp_server.py and add it to THIS set in the
+    # SAME commit. The SDK CI job runs on every push (no path filter), so a tool
+    # that lands ahead of its pin reds main for anyone — see sdk/CLAUDE.md.
     expected = {
         # discovery
         "match_task", "list_tasks", "get_task", "list_models",
@@ -100,6 +103,8 @@ async def test_registers_expected_tools():
         "transcribe", "speak",
         # retrieval
         "rerank", "embed",
+        # images
+        "generate_image",
     }
     assert names == expected, (
         f"missing: {expected - names}; unexpected: {names - expected}")
