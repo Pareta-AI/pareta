@@ -468,3 +468,12 @@ def test_embed_unwritable_out_errors_clean(patch_client, tmp_path):
     assert result.exit_code == 2
     assert "error:" in result.output
     assert "Traceback" not in result.output
+
+
+def test_image_edit_missing_file_fails_locally():
+    """A typo'd reference path must fail with a clear LOCAL error (exit 2),
+    never fall through the SDK's path-or-base64 handling into a network
+    round-trip that ends in an opaque server 400."""
+    result = runner.invoke(cli.app, ["image-edit", "/no/such/ref.png", "make it blue"])
+    assert result.exit_code == 2
+    assert "no such image file" in result.output

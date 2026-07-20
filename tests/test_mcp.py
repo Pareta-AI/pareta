@@ -104,7 +104,7 @@ async def test_registers_expected_tools():
         # retrieval
         "rerank", "embed",
         # images
-        "generate_image",
+        "generate_image", "edit_image",
     }
     assert names == expected, (
         f"missing: {expected - names}; unexpected: {names - expected}")

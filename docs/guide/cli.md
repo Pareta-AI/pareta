@@ -128,10 +128,13 @@ Both are metered per minute of audio.
 ```bash
 pareta image "a red fox in the snow" --out fox.png                    # 1024x1024 default
 pareta image "wide product banner" --size 2560x1440 --seed 7          # pinned seed
+pareta image-edit fox.png "give the fox a red scarf" --out fox2.png   # instruction edit
 ```
 
-Writes a PNG (default `image.png`). Billed FLAT per image — every size costs
-the same (the model renders at full 2K internally either way).
+`image` writes a PNG (default `image.png`), billed FLAT per image — every
+size costs the same (the model renders at full 2K internally either way).
+`image-edit` takes a reference image + a plain-language instruction (no
+mask), keeps the reference's aspect ratio, and is billed FLAT per edit.
 
 ## Scripting
 

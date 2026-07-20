@@ -291,6 +291,25 @@ def generate_image(prompt: str, path: str, size: str | None = None) -> dict[str,
     return {"path": path, "size": result.size, "model": result.model}
 
 
+@mcp.tool()
+@_guard
+def edit_image(image_path: str, prompt: str, output_path: str) -> dict[str, Any]:
+    """Edit the image at `image_path` with a plain-language instruction (no
+    mask) and SAVE the result to `output_path` (.png) — image bytes are read
+    from and written to disk, never returned (they would not fit in context).
+    The output keeps the reference's aspect ratio. METERED flat per edit.
+    Returns {"path", "size", "model"}."""
+    import os as _os
+
+    # `image_path` is a PATH by contract — fail locally on a typo instead of
+    # the SDK's path-or-base64 fallback sending the string to the server.
+    if not _os.path.isfile(image_path):
+        raise FileNotFoundError(f"no such image file: {image_path}")
+    result = _client().images.edit(image_path, prompt)
+    result.save(output_path)
+    return {"path": output_path, "size": result.size, "model": result.model}
+
+
 def main() -> None:
     """Console-script entrypoint (`pareta-mcp`): run the server over stdio."""
     mcp.run()

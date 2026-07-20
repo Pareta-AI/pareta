@@ -664,5 +664,38 @@ def image(
     _out.print(f"[green]wrote[/green] {dest}  ({result.size}, {result.model})")
 
 
+@app.command("image-edit")
+def image_edit(
+    ctx: typer.Context,
+    image: str = typer.Argument(..., help="Reference image file to edit (PNG/JPEG, ≤25MB)."),
+    prompt: str = typer.Argument(..., help="Plain-language edit instruction."),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Pin the noise seed for reproducibility."),
+    out: Optional[str] = typer.Option(None, "--out", help="Output file (default: edited.png)."),
+) -> None:
+    """Edit an image with an instruction (no mask) and write the result.
+    The output keeps the reference's aspect ratio. Billed FLAT per edit."""
+    state = _state(ctx)
+    # The CLI argument is documented as a FILE — fail a typo'd path locally
+    # instead of letting the SDK's path-or-base64 fallback ship the path
+    # string to the server as "base64" (opaque 400).
+    import os as _os
+    if not _os.path.isfile(image):
+        _err.print(f"[red]error:[/red] no such image file: {image}")
+        raise typer.Exit(code=2)
+    try:
+        result = _client().images.edit(image, prompt, seed=seed)
+    except (ValueError, TypeError, OSError) as e:
+        _err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=2)
+    except ParetaError as e:
+        raise _fail(e)
+    dest = out or "edited.png"
+    result.save(dest)
+    if state.json:
+        _emit_json({"file": dest, "size": result.size, "model": result.model})
+        return
+    _out.print(f"[green]wrote[/green] {dest}  ({result.size}, {result.model})")
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

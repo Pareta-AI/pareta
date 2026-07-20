@@ -66,3 +66,56 @@ async def test_images_generate_async_roundtrip():
     out = await pa.images.generate("async fox")
     assert out.image.startswith(b"\x89PNG")
     await pa.aclose()
+
+
+def test_images_edit_posts_and_parses():
+    seen = {}
+
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return json_response(200, _payload())
+
+    pa = sync_client(handler)
+    out = pa.images.edit(_PNG, "make the fox blue", seed=3)
+    assert isinstance(out, ImageGeneration)
+    assert seen["path"] == "/v1/images/edits"
+    assert seen["body"] == {"prompt": "make the fox blue", "image": _PNG, "seed": 3}
+    assert out.image == b"\x89PNG fake bytes"
+
+
+def test_images_edit_normalizes_path_and_bytes(tmp_path):
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return json_response(200, _payload())
+
+    pa = sync_client(handler)
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG ref file")
+    pa.images.edit(ref, "x")
+    assert seen["body"]["image"] == base64.b64encode(b"\x89PNG ref file").decode()
+    pa.images.edit(b"\x89PNG raw bytes", "x")
+    assert seen["body"]["image"] == base64.b64encode(b"\x89PNG raw bytes").decode()
+
+
+def test_images_edit_rejects_empty_inputs():
+    pa = sync_client(lambda request: json_response(200, _payload()))
+    with pytest.raises(ValueError):
+        pa.images.edit(_PNG, "")
+    with pytest.raises(ValueError):
+        pa.images.edit("   ", "make it blue")
+    with pytest.raises(TypeError):
+        pa.images.edit(123, "make it blue")
+
+
+async def test_images_edit_async_roundtrip():
+    def handler(request):
+        assert request.url.path == "/v1/images/edits"
+        return json_response(200, _payload())
+
+    pa = async_client(handler)
+    out = await pa.images.edit(_PNG, "async edit")
+    assert out.image.startswith(b"\x89PNG")
+    await pa.aclose()

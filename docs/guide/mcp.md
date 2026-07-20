@@ -110,13 +110,13 @@ The tools are grouped the same way as the SDK and CLI:
 - **Auto** — `auto_metrics` (read-only, free) and `compare_frontier` (metered: one prompt against a frontier vendor for a side-by-side with `chat`).
 - **Audio** — `transcribe`, `speak` (metered per minute).
 - **Retrieval** — `rerank` (metered per document scored), `embed` (metered per input token).
-- **Images** — `generate_image` (metered flat per image). Saves the PNG to a path you give it — the bytes never enter the agent's context.
+- **Images** — `generate_image` (metered flat per image), `edit_image` (metered flat per edit). Both work through disk paths you give them — image bytes never enter the agent's context.
 
 A typical agent flow: `match_task("pull the key fields out of contracts")` → `run_eval(models=["auto"], task, items)` → `chat(prompt)`.
 
 ## Spending money is gated by your client's approval
 
-Some tools cost money: `chat` / `run_eval` / `compare_frontier` / `transcribe` / `speak` / `rerank` / `embed` / `generate_image` debit your org balance. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which rows, which prompt) before approving a metered call. Tool errors — a missing key, an out-of-credit balance — come back as a clean `{"error": …}` message the agent can read, not a crash.
+Some tools cost money: `chat` / `run_eval` / `compare_frontier` / `transcribe` / `speak` / `rerank` / `embed` / `generate_image` / `edit_image` debit your org balance. The server deliberately adds **no** second confirmation layer — **your MCP client's per-tool-call approval is the guardrail.** Keep approval prompts on for the `pareta` server, and review the arguments (which task, which rows, which prompt) before approving a metered call. Tool errors — a missing key, an out-of-credit balance — come back as a clean `{"error": …}` message the agent can read, not a crash.
 
 ## Next steps
 

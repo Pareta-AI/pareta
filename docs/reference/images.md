@@ -1,21 +1,27 @@
 # images
 
-`client.images` is the image-generation surface: turn a text prompt into a
-PNG. It exposes the `image-gen` **capability lane** as one method:
+`client.images` is the image surface: turn a text prompt into a PNG, or edit
+an existing image with a plain-language instruction. It exposes the
+`image-gen` **capability lane** as two methods:
 
 - [`images.generate`](#imagesgenerate): generate an image from a prompt and
   save it to a file.
+- [`images.edit`](#imagesedit): edit a reference image with an instruction
+  (no mask).
 
 Two facts set this namespace apart from the rest of the SDK:
 
-- **Its own route, not `chat.completions`.** Generation hits
-  `POST /v1/images/generations` directly. You never pick a serving model, a
-  GPU, or a step count; Pareta resolves the lane (`hidream-1` today), exactly
-  as `model="auto"` does for chat.
-- **Metered flat per image.** Every generation debits the same per-image
+- **Its own routes, not `chat.completions`.** Generation hits
+  `POST /v1/images/generations` and editing hits `POST /v1/images/edits`
+  directly. You never pick a serving model, a GPU, or a step count; Pareta
+  resolves the lane (`hidream-1` today), exactly as `model="auto"` does for
+  chat.
+- **Metered flat per call.** Every generation debits the same per-image
   price against your org balance — the model renders at full 2K quality
   internally regardless of the delivery size, so every size costs the same.
-  The `X-Pareta-Billed` response header carries the receipt in micro-USD. An
+  Every edit debits the same per-edit price (edits cost more than
+  generations: the reference roughly doubles the model's work). The
+  `X-Pareta-Billed` response header carries the receipt in micro-USD. An
   empty balance raises [`InsufficientCreditsError`](exceptions.md) (402).
 
 Calls go through the client's transport, so auth, retries, and typed error
@@ -57,8 +63,30 @@ pa.images.generate(prompt, *, size=None, seed=None) -> ImageGeneration
 
 TypeScript: `pa.images.generate(prompt, { size?, seed? })`.
 
-A generation takes ~15s when the lane is warm; the first request after a
+A generation takes ~12s when the lane is warm; the first request after a
 quiet spell can take a few minutes while the model boots.
+
+## images.edit
+
+```python
+pa.images.edit(image, prompt, *, seed=None) -> ImageGeneration
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `image` | `str \| PathLike \| bytes` | The reference image: a file path, raw bytes, or an already-base64 string. PNG/JPEG, ≤25MB decoded. |
+| `prompt` | `str` | The edit instruction, in plain language. Required, ≤4000 chars. Instruction-only — there is no mask parameter. |
+| `seed` | `int \| None` | Pin the noise seed for reproducibility. |
+
+TypeScript: `pa.images.edit(image, prompt, { seed? })` — `image` is a file
+path (Node), `Uint8Array`/`ArrayBuffer`/`Blob`, or `{ base64 }`.
+
+```python
+pa.images.edit("product.png", "put the bottle on a marble surface").save("v2.png")
+```
+
+The output keeps the reference's aspect ratio (a ~1MP reference renders at
+~4MP). A warm edit takes ~30s. Billed flat per edit.
 
 ## The ImageGeneration object
 

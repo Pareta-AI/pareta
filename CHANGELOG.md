@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 — 2026-07-19
+
+- **Image editing**: `client.images.edit(image, prompt, seed=?)` →
+  `POST /v1/images/edits` (instruction-only, no mask; the output keeps the
+  reference's aspect ratio). `image` is a path, raw bytes, or base64.
+  Billed FLAT per edit. Returns the same `ImageGeneration`.
+- CLI: `pareta image-edit ref.png "instruction" --out edited.png`.
+- MCP: new `edit_image` tool (disk in/out — bytes never enter context).
+
 ## 1.2.0 — 2026-07-19
 
 - **Images lane**: `client.images.generate(prompt, size=?, seed=?)` →
