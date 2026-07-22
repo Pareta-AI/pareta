@@ -121,34 +121,36 @@ def test_eval_set_create_sends_multipart_jsonl():
 
     pa = sync_client(handler)
     es = pa.evals.sets.create(
-        task="intent-classification", intent="classify each utterance's intent",
+        task="intent-classification", prompt="classify each utterance's intent",
         items=[{"input": {"text": "a"}, "expected": "x"}, {"input": {"text": "b"}, "expected": "y"}],
     )
     assert isinstance(es, EvalSet)
     assert es.id == "es_1" and es.item_count == 2
     assert seen["ctype"].startswith("multipart/form-data")
-    # the JSONL (one row per line) + form fields (incl. the required intent)
+    # the JSONL (one row per line) + form fields (incl. the required prompt,
+    # sent under the multipart field name "prompt" — v3 breaking rename)
     assert b"intent-classification" in seen["body"]
+    assert b'name="prompt"' in seen["body"]
     assert b"classify each utterance" in seen["body"]
     assert b'"text": "a"' in seen["body"]
 
 
-def test_eval_set_create_requires_intent():
-    # CB1 v2: intent is a required signature parameter (missing → TypeError),
+def test_eval_set_create_requires_prompt():
+    # CB1 v3: prompt is a required signature parameter (missing → TypeError),
     # and an empty/whitespace value fails fast with the actionable message
     # BEFORE any request goes out.
     pa = sync_client(lambda r: json_response(201, {"eval_set": {}}))
     with pytest.raises(TypeError):
         pa.evals.sets.create(task="t", items=[{"input": {}, "expected_output": {}}])
-    with pytest.raises(ValueError, match="intent is required"):
-        pa.evals.sets.create(task="t", intent="   ",
+    with pytest.raises(ValueError, match="prompt is required"):
+        pa.evals.sets.create(task="t", prompt="   ",
                              items=[{"input": {}, "expected_output": {}}])
 
 
 def test_eval_set_create_requires_items():
     pa = sync_client(lambda r: json_response(201, {"eval_set": {}}))
     with pytest.raises(ValueError):
-        pa.evals.sets.create(task="t", intent="do it", items=[])
+        pa.evals.sets.create(task="t", prompt="do it", items=[])
 
 
 def test_eval_set_list_and_delete():
@@ -239,7 +241,7 @@ def test_run_create_from_items_autocreates_set():
 
     pa = sync_client(handler)
     run = pa.evals.runs.create(
-        task="intent-classification", intent="classify each utterance",
+        task="intent-classification", prompt="classify each utterance",
         items=[{"input": {"text": "a"}, "expected": "x"}],
         models=["qwen-1"], wait=False)
     assert run.id == "run_2"
@@ -254,10 +256,12 @@ def test_propose_contract_and_taskless_autobind():
     def handler(request):
         posts.append(request.url.path)
         if request.url.path == "/v1/eval-sets/propose-contract":
+            # v3: the propose multipart carries the "prompt" form field
+            assert b'name="prompt"' in request.content
             return json_response(200, {
                 "proposals": [{"task_id": "intent-classification", "confidence": "high",
                                "evidence": {"validated_n": 5, "total_n": 5}}],
-                "homogeneous": True, "split": None, "intent": "classify each utterance"})
+                "homogeneous": True, "split": None, "prompt": "classify each utterance"})
         if request.url.path == "/v1/eval-sets":
             # the bound task_id must ride the create multipart
             assert b"intent-classification" in request.content
@@ -267,12 +271,12 @@ def test_propose_contract_and_taskless_autobind():
     pa = sync_client(handler)
     result = pa.evals.propose_contract(
         items=[{"input": {"text": "a"}, "expected_output": {"label": "x"}}] * 5,
-        intent="classify each utterance")
+        prompt="classify each utterance")
     assert result.bound_task == "intent-classification" and result.is_clean
 
     es = pa.evals.sets.create(
         items=[{"input": {"text": "a"}, "expected_output": {"label": "x"}}] * 5,
-        intent="classify each utterance")   # no task → binds via propose
+        prompt="classify each utterance")   # no task → binds via propose
     assert es.id == "es_bound"
     assert posts == ["/v1/eval-sets/propose-contract", "/v1/eval-sets/propose-contract", "/v1/eval-sets"]
 
@@ -291,20 +295,20 @@ def test_taskless_create_does_not_autobind_custom_eval_floor():
                 "proposals": [{"task_id": "custom-eval", "confidence": "medium",
                                "evidence": {"validated_n": 5, "total_n": 5}}],
                 "homogeneous": True, "split": None,
-                "intent": "grade the tone of each reply",
+                "prompt": "grade the tone of each reply",
                 "message": "no specific grading contract fits this shape"})
         return json_response(201, {"eval_set": {"id": "es_x"}})
 
     pa = sync_client(handler)
     result = pa.evals.propose_contract(
         items=[{"input": {"t": "a"}, "expected_output": {"r": "b"}}] * 5,
-        intent="grade the tone of each reply")
+        prompt="grade the tone of each reply")
     assert result.bound_task is None and result.is_clean is False
 
     with pytest.raises(ParetaError, match="custom-eval"):
         pa.evals.sets.create(
             items=[{"input": {"t": "a"}, "expected_output": {"r": "b"}}] * 5,
-            intent="grade the tone of each reply")   # no task → must NOT bind
+            prompt="grade the tone of each reply")   # no task → must NOT bind
     # only the propose call happened — never a create POST
     assert "/v1/eval-sets" not in posted
 
@@ -312,26 +316,26 @@ def test_taskless_create_does_not_autobind_custom_eval_floor():
     posted.clear()
     es = pa.evals.sets.create(
         items=[{"input": {"t": "a"}, "expected_output": {"r": "b"}}] * 5,
-        intent="grade the tone of each reply", task="custom-eval")
+        prompt="grade the tone of each reply", task="custom-eval")
     assert es.id == "es_x"
     assert posted == ["/v1/eval-sets"]   # no propose call when task is pinned
 
 
 def test_taskless_create_raises_on_conflict():
     """A conflict (or any non-clean result) refuses to auto-bind and raises
-    with the intent quoted — never a silent wrong bind."""
+    with the prompt quoted — never a silent wrong bind."""
     def handler(request):
         return json_response(200, {
             "proposals": [{"task_id": "intent-classification", "confidence": "low",
                            "evidence": {}}],
-            "homogeneous": True, "split": None, "intent": "summarize each utterance",
-            "conflict": {"intended_task": "summarization", "reasoning": "intent says summarize"}})
+            "homogeneous": True, "split": None, "prompt": "summarize each utterance",
+            "conflict": {"intended_task": "summarization", "reasoning": "prompt says summarize"}})
 
     pa = sync_client(handler)
     with pytest.raises(ParetaError, match="summarize each utterance"):
         pa.evals.sets.create(
             items=[{"input": {"text": "a"}, "expected_output": {"label": "x"}}] * 5,
-            intent="summarize each utterance")
+            prompt="summarize each utterance")
 
 
 def test_run_create_frontier_keyword_needs_resolvable_task():

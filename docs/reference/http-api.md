@@ -96,7 +96,7 @@ out. A key that reaches the server and is rejected returns `401`
 | `audio.transcriptions(audio)` | `POST` | `/v1/audio/transcriptions` |
 | `audio.speech(text)` | `POST` | `/v1/audio/speech` |
 | `evals.frontier_models(task)` | `GET` | `/v1/eval/frontier-models` |
-| `evals.sets.create(...)` | `POST` | `/v1/eval-sets` |
+| `evals.sets.create(items=..., prompt=...)` | `POST` | `/v1/eval-sets` (multipart: `items` JSONL + `prompt` + optional `task_id`/`name`) |
 | `evals.sets.list()` | `GET` | `/v1/eval-sets` |
 | `evals.sets.retrieve(id)` | `GET` | `/v1/eval-sets/{id}` |
 | `evals.sets.delete(id)` | `DELETE` | `/v1/eval-sets/{id}` |
@@ -407,10 +407,12 @@ with Pareta.from_env() as pa:
 ### `POST /v1/eval-sets`
 
 Create an eval set from your rows. Wrapped by
-[`evals.sets.create(task=..., items=...)`](../guide/evaluation.md). The rows go
+[`evals.sets.create(items=..., prompt=...)`](../guide/evaluation.md). The rows go
 over the wire as **JSONL** inside a `multipart/form-data` body (`items` file part
-plus `task_id` and `name` form fields), not as a JSON array. An empty `items`
-raises `ValueError`. The server returns `{"eval_set": {...}}`; the SDK maps it to
+plus the required `prompt` form field, and optional `task_id` / `name`), not as a
+JSON array. Each line is `{"input": {...}, "expected_output": {...}}` — both keys
+required, both values JSON objects; the server rejects any other row shape. An
+empty `items` raises `ValueError`. The server returns `{"eval_set": {...}}`; the SDK maps it to
 an `EvalSet` (`id`, `task_id`, `name`, `item_count`, `scoring_strategy`).
 
 ```python
@@ -418,10 +420,10 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     eval_set = pa.evals.sets.create(
-        task="contract-key-fields",
+        prompt="extract the key fields from each contract",
         items=[
-            {"input": "Agreement between A and B...", "expected": {"parties": ["A", "B"]}},
-            {"input": "This SOW is by C for D...",     "expected": {"parties": ["C", "D"]}},
+            {"input": {"contract_text": "Agreement between A and B..."}, "expected_output": {"parties": ["A", "B"]}},
+            {"input": {"contract_text": "This SOW is by C for D..."},    "expected_output": {"parties": ["C", "D"]}},
         ],
     )
     print(eval_set.id, eval_set.item_count, eval_set.scoring_strategy)
@@ -478,8 +480,9 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     eval_set = pa.evals.sets.create(
-        task="document-extraction",
-        items=[{"expected": {"invoice_total": "1240.00"}}],
+        prompt="extract the invoice total from each document",
+        task="document-extraction",   # pinned: blob rows carry no text to infer from
+        items=[{"expected_output": {"invoice_total": "1240.00"}}],
     )
     # Attach the PDF that row 0's blob field expects.
     pa.evals.sets.upload_document(
@@ -522,8 +525,8 @@ from pareta import Pareta
 
 with Pareta.from_env() as pa:
     run = pa.evals.runs.create(
-        task="contract-key-fields",
-        items=[{"input": "Agreement between A and B...", "expected": {"parties": ["A", "B"]}}],
+        prompt="extract the key fields from each contract",
+        items=[{"input": {"contract_text": "Agreement between A and B..."}, "expected_output": {"parties": ["A", "B"]}}],
         models=["auto"],                        # the candidate under test
         frontier="benchmarked",                 # vendor baselines benchmarked on the task
         wait=True,

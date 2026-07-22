@@ -13,7 +13,7 @@ declared contract — [`evals.runs.create(task=...)`](./evals.md) uses it to
 validate your rows and score every candidate the same way.
 
 - `match` maps a plain-English description of your dataset to the right
-  grading contract, so you don't read a scorer list.
+  right scoring for your data, so you don't read a scorer list.
 - `list` / `retrieve` browse the contracts and a contract's row schema.
 
 Catalog reads are free: `list`, `retrieve`, and `match` are not metered. The
@@ -38,7 +38,7 @@ def match(self, query: str, *, top_k: int = 5) -> TaskMatch
 
 **Route:** `POST /v1/tasks/match`
 
-Turns a free-text description of your data or job into the grading contract
+Turns a free-text description of your data or job into the task that scores it
 that fits it. The matcher is an LLM reasoning router: it reasons about intent
 (not keyword overlap). If the router is unavailable it falls back to a
 deterministic keyword scorer.
@@ -52,12 +52,12 @@ deterministic keyword scorer.
 
 Returns a [`TaskMatch`](#taskmatch). Read `match.type` for the outcome:
 
-- `"task"` — a benchmarked grading contract fits; `.chosen.task_id` names it.
+- `"task"` — Pareta knows how to score this; `.chosen.task_id` names it.
 - `"capability"` — the job is a general lane (chat, coding, vision, speech,
   retrieval) rather than a labeled-dataset job; `.capability` describes it.
   General lanes have judge- or metric-scored general tasks when you want to
   benchmark them anyway.
-- `"unsupported"` / `"none"` — no grading contract fits the description.
+- `"unsupported"` / `"none"` — nothing in the catalog fits the description.
   This is a statement about *scoring*, not about serving: generation work
   can always go to `model="auto"`.
 
@@ -65,7 +65,7 @@ Returns a [`TaskMatch`](#taskmatch). Read `match.type` for the outcome:
 match = pa.tasks.match("pull line items and totals out of vendor invoices")
 
 if match.type == "task":
-    task_id = match.chosen.task_id          # the grading contract
+    task_id = match.chosen.task_id          # how it will be scored
     print(f"grade with {task_id} via {match.matcher} "
           f"(confidence={match.confidence})")
 elif match.type == "capability":
@@ -136,7 +136,7 @@ def list(self) -> list[Task]
 
 **Route:** `GET /v1/tasks`
 
-Returns every grading contract as a `list[Task]`. Use this to browse when you
+Returns the full catalog as a `list[Task]`. Use this to browse when you
 do not have a free-text query for `match`.
 
 ```python
@@ -149,7 +149,7 @@ for task in pa.tasks.list():
 
 ## From dataset to proof
 
-End to end: a description of your data in, a grading contract out, `"auto"`
+End to end: a description of your data in, the right scoring out, `"auto"`
 proven against the frontier on your own rows — while inference stays
 `model="auto"` throughout.
 
@@ -158,7 +158,7 @@ from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. dataset description -> grading contract
+# 1. dataset description -> how it will be scored
 match = pa.tasks.match("extract key fields from contracts")
 if not match.matched:
     raise SystemExit(f"no contract matched: {[c.task_id for c in match.candidates]}")
@@ -170,8 +170,9 @@ print(f"task={task.id}  scorer={task.default_scorer}  blob={task.has_blob_input}
 
 # 3. the proof: benchmark "auto" against the frontier on your own rows
 run = pa.evals.runs.create(
-    task=task_id,
-    items=[{"input": "…", "expected": {"effective_date": "2026-01-01"}}],
+    prompt="extract the effective date from each contract",
+    task=task_id,   # pinned from the match above
+    items=[{"input": {"contract_text": "…"}, "expected_output": {"effective_date": "2026-01-01"}}],
     models=["auto"],
     frontier="benchmarked",
     wait=True,
@@ -205,7 +206,7 @@ async def main():
         print(task.id, task.default_scorer, task.has_blob_input)
 
         catalog = await pa.tasks.list()
-        print(f"{len(catalog)} grading contracts")
+        print(f"{len(catalog)} tasks")
 
 asyncio.run(main())
 ```

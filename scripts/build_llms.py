@@ -61,7 +61,7 @@ INTRO = (
     "verified, and falls back to a frontier model when that's the right call — "
     "one request, one bill. Its SDKs also let you benchmark `\"auto\"` against "
     "frontier models on your own data, read your auto traffic metrics, and "
-    "find the grading contract that scores your eval data (`tasks.match`). "
+    "find out how your eval data will be scored (`tasks.match`). "
     "Authenticate with a `pareta_sk_` key from the dashboard or the "
     "`PARETA_API_KEY` environment variable."
 )

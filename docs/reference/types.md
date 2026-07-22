@@ -153,7 +153,7 @@ One element of a `ModelList`.
 
 ## Discovery types
 
-These come from the `tasks` namespace and name the grading contract before you
+These come from the `tasks` namespace and describe how your data will be scored before you
 send traffic.
 
 ### Task
@@ -308,8 +308,8 @@ Returned from `evals.sets.create(...)`, `evals.sets.list()`, and
 
 ```python
 es = pa.evals.sets.create(
-    task="contract-key-fields",
-    items=[{"input": "...contract...", "expected": {"effective_date": "2026-01-01"}}],
+    prompt="extract the key fields from each contract",
+    items=[{"input": {"contract_text": "...contract..."}, "expected_output": {"effective_date": "2026-01-01"}}],
     name="my contracts v1",
 )
 print(es.id, es.task_id, es.item_count, es.scoring_strategy)
@@ -336,8 +336,8 @@ once it is terminal. The object wraps the server's `{"run": {...}, "results":
 
 ```python
 run = pa.evals.runs.create(
-    task="contract-key-fields",
-    items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
+    prompt="extract the key fields from each contract",
+    items=[{"input": {"contract_text": "..."}, "expected_output": {"effective_date": "2026-01-01"}}],
     models=["auto"],                  # the product under test
     frontier="benchmarked",           # vendor baselines benchmarked on this task
     wait=True,                        # block until terminal

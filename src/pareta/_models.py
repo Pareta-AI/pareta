@@ -495,10 +495,10 @@ class EvalSet(_Base):
         return self._raw.get("scoring_strategy")
 
     @property
-    def intent(self) -> str | None:
+    def prompt(self) -> str | None:
         """The one-sentence success criterion this set was created with
-        (CB1: an eval set is DATA + INTENT). Required at create."""
-        return self._raw.get("intent")
+        (CB1: an eval set is DATA + PROMPT). Required at create."""
+        return self._raw.get("prompt")
 
 
 def _eval_set_from_create(raw) -> EvalSet:
@@ -507,12 +507,12 @@ def _eval_set_from_create(raw) -> EvalSet:
 
 
 class ContractProposal(_Base):
-    """One proposed grading contract for an uploaded dataset (a row of
-    ProposalResult.proposals). `task_id` is the contract to bind; `confidence`
-    is "high"/"medium"/"low"; `evidence` carries the structural fit
-    (`validated_n`/`total_n`), the matcher's reasoning, and `alternatives`.
-    `warning` is set on the custom-eval floor when the data looks
-    extraction-shaped (judge grading is weaker there)."""
+    """One proposed way to score an uploaded dataset (a row of
+    ProposalResult.proposals). `task_id` is the task that would do the
+    scoring; `confidence` is "high"/"medium"/"low"; `evidence` carries the
+    structural fit (`validated_n`/`total_n`), the matcher's reasoning, and
+    `alternatives`. `warning` is set on a "custom-eval" proposal when the
+    data looks extraction-shaped (judge grading is weaker there)."""
 
     @property
     def task_id(self) -> str | None:
@@ -532,18 +532,19 @@ class ContractProposal(_Base):
 
 
 class ProposalResult(_Base):
-    """The binder's answer for `evals.propose_contract` (POST
-    /v1/eval-sets/propose-contract): which grading contract(s) fit your data
-    under your stated intent. Nothing is persisted — confirm by passing the
-    chosen `task_id` (or letting `create` auto-bind a clean single proposal).
+    """Pareta's answer for `evals.propose_contract` (POST
+    /v1/eval-sets/propose-contract): how your data could be scored under your
+    stated prompt. Nothing is persisted — confirm by passing the chosen
+    `task_id` (or letting a task-less `create` use a clean single proposal).
 
     - `proposals`: ranked ContractProposal rows (may be empty on a hard split).
-    - `homogeneous`: False when the set is mixed (a top contract validates a
+    - `homogeneous`: False when the set is mixed (a top task validates a
       strict majority, not all) — `split` describes it; CB2 handles mixed sets.
-    - `conflict`: set when your intent describes a different job than the
+    - `conflict`: set when your prompt describes a different job than the
       data's shape supports; carries `intended_task` + `reasoning`.
-    - `intent`: your intent, echoed back.
-    - `bound_task` / `is_clean`: the SDK's auto-bind decision (see below)."""
+    - `prompt`: your prompt, echoed back.
+    - `bound_task` / `is_clean`: what a task-less `create` would do (see
+      below)."""
 
     @property
     def proposals(self) -> list[ContractProposal]:
@@ -566,8 +567,8 @@ class ProposalResult(_Base):
         return self._raw.get("closest_task")
 
     @property
-    def intent(self) -> str | None:
-        return self._raw.get("intent")
+    def prompt(self) -> str | None:
+        return self._raw.get("prompt")
 
     @property
     def message(self) -> str | None:
@@ -575,15 +576,14 @@ class ProposalResult(_Base):
 
     @property
     def is_clean(self) -> bool:
-        """True when the binder matched exactly ONE homogeneous SPECIFIC
-        contract at high/medium confidence and no conflict/split — the case
-        `create` auto-binds without a human confirming. Low confidence, a
+        """True when exactly ONE homogeneous SPECIFIC task matched at
+        high/medium confidence with no conflict/split — the case a task-less
+        `create` proceeds with, no human confirming. Low confidence, a
         conflict, a split, zero or multiple proposals all require an explicit
-        `task=`. The `custom-eval` universal FLOOR is EXCLUDED: the binder
-        offers it only when no specific contract fits (its proposal has the
-        same clean shape), and per the precision ladder the floor is a
-        CHOICE — the user opts in with `task="custom-eval"`, never a silent
-        auto-bind."""
+        `task=`. `custom-eval` (a judge panel grading each answer against
+        your prompt) is EXCLUDED: it is offered only when nothing specific
+        fits (its proposal has the same clean shape), and using it is the
+        user's CHOICE — opt in with `task="custom-eval"`, never silently."""
         props = self.proposals
         return (self.homogeneous and self.conflict is None
                 and self.split is None and len(props) == 1
@@ -593,7 +593,8 @@ class ProposalResult(_Base):
 
     @property
     def bound_task(self) -> str | None:
-        """The task `create` would auto-bind, or None if the result isn't clean."""
+        """How a task-less `create` would score this set, or None if the
+        result isn't clean (you must pass `task=` yourself)."""
         return self.proposals[0].task_id if self.is_clean else None
 
 

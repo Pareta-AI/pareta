@@ -3,7 +3,7 @@
 Pareta is one OpenAI-compatible endpoint with one model id: **`"auto"`**. This
 page covers the handful of ideas the rest of the SDK assumes you understand:
 the **routing brain** behind `model="auto"`, **one interface per data
-shape**, **tasks** (the grading contracts evals score against), **open vs
+shape**, **tasks** (how evals score your data), **open vs
 frontier** models, why **models** and **hardware**
 are hidden, how **metering** works, and the **funnel** that ties them together
 (prove `"auto"` on your data, ship it, watch the metrics).
@@ -88,13 +88,13 @@ The separate routes exist because vectors, ranked lists, and audio bytes
 don't fit the chat message contract — not because there is anything to
 navigate.
 
-## Tasks: grading contracts for evals
+## Tasks: how evals score your data
 
 Internally, `"auto"`'s quality guarantees come from a catalog of benchmarked
 jobs — Pareta has measured open and frontier models against each on real
 data. You don't navigate that catalog to use Pareta. You meet it in exactly
-one place: **benchmarking on your own data**, where a **task** is the
-grading contract — the row shape your dataset must follow and the scorer
+one place: **benchmarking on your own data**, where a **task** says how your
+results are scored — the row shape your dataset must follow and the scorer
 that grades outputs against your labels.
 
 Every task has a stable `id` (e.g. `"contract-key-fields"`), a
@@ -108,7 +108,7 @@ carry documents or images, not just text).
 for task in pa.tasks.list():
     print(task.id, task.default_scorer, "blob" if task.has_blob_input else "text")
 
-# Fetch one contract, optionally with sample rows to see its input shape
+# Fetch one task, optionally with sample rows to see its input shape
 t = pa.tasks.retrieve("contract-key-fields", examples_n=3)
 print(t.id, t.default_scorer, t.has_blob_input)
 ```
@@ -120,13 +120,13 @@ for (const task of await pa.tasks.list()) {
   console.log(task.id, task.defaultScorer, task.hasBlobInput ? "blob" : "text");
 }
 
-// Fetch one contract, optionally with sample rows to see its input shape
+// Fetch one task, optionally with sample rows to see its input shape
 const t = await pa.tasks.retrieve("contract-key-fields", { examplesN: 3 });
 console.log(t.id, t.defaultScorer, t.hasBlobInput);
 ```
 
 Rather than reading the scorer list, describe your dataset in plain English
-and `tasks.match` names the contract that grades it:
+and `tasks.match` names the task that grades it:
 
 **Python**
 
@@ -146,7 +146,7 @@ if (m.matched && m.chosen) {
 ```
 
 `match()` raises `ValueError` on an empty query. A no-match answer is a
-statement about *scoring* — no benchmarked contract fits that description —
+statement about *scoring* — no benchmarked task fits that description —
 not about serving: generation work always goes to `model="auto"`. See
 [Tasks](../reference/tasks.md) for the full matcher surface.
 
@@ -350,7 +350,7 @@ it in production, cheaper." This is the recommended flow:
 match  ->  eval on YOUR data  ->  model="auto" in production  ->  watch the metrics
 ```
 
-1. **Match** your dataset to its grading contract (`tasks.match`).
+1. **Match** your dataset to the task that scores it (`tasks.match`).
 2. **Eval** `"auto"` against frontier baselines on *your own* data. Public
    benchmarks are a starting point; your rows are the deciding vote.
 3. **Ship** `model="auto"` — the same call, now carrying production traffic.
@@ -364,18 +364,18 @@ from pareta import Pareta
 
 pa = Pareta.from_env()
 
-# 1. Match your dataset to its grading contract
+# 1. Match your dataset to the task that scores it
 match = pa.tasks.match("extract key fields from contracts")
 task = match.chosen.task_id
 
 # 2. Evaluate "auto" against frontier baselines on YOUR rows.
-#    Pass items + intent to create the eval set inline (task is optional —
-#    here we pin the contract we just matched), or use an existing set id.
+#    Pass items + prompt to create the eval set inline (task is optional —
+#    here we pin the task we just matched), or use an existing set id.
 run = pa.evals.runs.create(
-    intent="extract the effective date from each contract",
+    prompt="extract the effective date from each contract",
     task=task,
     items=[
-        {"input": "...your contract text...", "expected": {"effective_date": "2026-01-01"}},
+        {"input": {"contract_text": "...your contract text..."}, "expected_output": {"effective_date": "2026-01-01"}},
         # ...more rows...
     ],
     models=["auto"],
@@ -411,13 +411,13 @@ const match = await pa.tasks.match("extract key fields from contracts");
 const task = match.chosen!.taskId;
 
 // 2. Evaluate "auto" against frontier baselines on YOUR rows.
-//    Pass items + intent to create the eval set inline (task is optional —
+//    Pass items + prompt to create the eval set inline (task is optional —
 //    here we pin the contract we just matched), or use an existing set id.
 const run = await pa.evals.runs.create({
-  intent: "extract the effective date from each contract",
+  prompt: "extract the effective date from each contract",
   task,
   items: [
-    { input: "...your contract text...", expected: { effective_date: "2026-01-01" } },
+    { input: { contract_text: "...your contract text..." }, expected_output: { effective_date: "2026-01-01" } },
     // ...more rows...
   ],
   models: ["auto"],
@@ -445,8 +445,8 @@ console.log(m.requests_30d, m.success_rate_30d, m.savings_vs_frontier_micro_usd_
 A few notes on the eval call:
 
 - Provide **either** `eval_set=<id>` (an existing set) **or** `items=... +
-  intent=...` to create one inline (`task=` is optional — pass it to pin a
-  specific contract). With neither, `create()` raises `ValueError`.
+  prompt=...` to create one inline (`task=` is optional — pass it to pin a
+  specific task). With neither, `create()` raises `ValueError`.
 - `frontier=` accepts `None`/`"none"` (no baselines), an explicit list of
   frontier ids, `"all"` (every frontier model for the task), or `"benchmarked"`
   (only the frontier models measured on this task, vision-filtered for

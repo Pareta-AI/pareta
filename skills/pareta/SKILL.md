@@ -87,7 +87,7 @@ When the user has labeled rows (a JSONL file, one object per line), prove what
 auto does on *their* data — head-to-head with frontier baselines:
 
 ```bash
-pareta evals run --intent "extract the key fields from each contract" \
+pareta evals run --prompt "extract the key fields from each contract" \
   --file rows.jsonl --models auto --frontier --wait
 ```
 

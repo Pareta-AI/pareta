@@ -224,19 +224,19 @@ app.add_typer(evals_app, name="evals")
 def evals_run(
     ctx: typer.Context,
     eval_set: Optional[str] = typer.Option(None, "--eval-set", help="Existing eval-set id to run."),
-    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; the binder resolves --intent otherwise)."),
+    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; Pareta works out the scoring from --prompt otherwise)."),
     file: Optional[str] = typer.Option(None, "--file", help="JSONL of items, used to build a set on the fly."),
-    intent: Optional[str] = typer.Option(None, "--intent", help="One sentence: what the model should do with each item (required to build a set)."),
+    prompt: Optional[str] = typer.Option(None, "--prompt", help="One sentence: what the model should do with each item (required to build a set)."),
     models: list[str] = typer.Option([], "--models", help="Open model id(s) to evaluate (repeatable)."),
     frontier: bool = typer.Option(False, "--frontier", help="Also evaluate the benchmarked frontier roster."),
     name: Optional[str] = typer.Option(None, "--name", help="Name for an on-the-fly eval set."),
     wait: bool = typer.Option(False, "--wait", help="Block until the run finishes."),
 ) -> None:
     """Run an eval on your own data. Either point at an existing --eval-set, or
-    pass --file of JSONL items + --intent (what the model should do with each
-    item) to build one on the fly — the binder picks the grading contract, or
-    pin one with --task. Include "auto" in --models to benchmark the routing
-    brain itself; --frontier adds the task's benchmarked vendor models."""
+    pass --file of JSONL items + --prompt (what the model should do with each
+    item) to build one on the fly — Pareta works out how to score the results,
+    or pin a task with --task. Include "auto" in --models to benchmark the
+    routing brain itself; --frontier adds the task's benchmarked vendor models."""
     state = _state(ctx)
     if not models:
         _err.print("[red]error:[/red] --models is required (e.g. --models auto)")
@@ -246,10 +246,10 @@ def evals_run(
     try:
         items = _read_jsonl(file) if file else None
         if eval_set is None and not items:
-            _err.print("[red]error:[/red] pass --eval-set <id>, or --file (with --intent)")
+            _err.print("[red]error:[/red] pass --eval-set <id>, or --file (with --prompt)")
             raise typer.Exit(code=2)
         run = _client().evals.runs.create(
-            eval_set=eval_set, task=task, items=items, intent=intent,
+            eval_set=eval_set, task=task, items=items, prompt=prompt,
             models=list(models), frontier=frontier_arg, name=name, wait=wait,
         )
     except (ValueError, TypeError) as e:
@@ -285,15 +285,15 @@ def evals_run(
 @evals_app.command("propose")
 def evals_propose(
     ctx: typer.Context,
-    file: str = typer.Option(..., "--file", help="JSONL of items to bind."),
-    intent: str = typer.Option(..., "--intent", help="One sentence: what the model should do with each item."),
+    file: str = typer.Option(..., "--file", help="JSONL of items to preview scoring for."),
+    prompt: str = typer.Option(..., "--prompt", help="One sentence: what the model should do with each item."),
 ) -> None:
-    """Preview which grading contract fits your data under a stated intent.
+    """Preview how your data would be scored under a stated prompt.
     Nothing is persisted — feed the chosen task id into `evals run --task`,
-    or let `evals run --file --intent` auto-bind a clean single match."""
+    or let `evals run --file --prompt` use a clean single match automatically."""
     state = _state(ctx)
     try:
-        result = _client().evals.propose_contract(items=_read_jsonl(file), intent=intent)
+        result = _client().evals.propose_contract(items=_read_jsonl(file), prompt=prompt)
     except (ValueError, TypeError) as e:
         _err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)
@@ -303,9 +303,9 @@ def evals_propose(
         _emit(state, result)
         return
     if result.bound_task:
-        _out.print(f"bound:   [green]{result.bound_task}[/green] (auto-binds; `evals run --file … --intent …` uses it)")
+        _out.print(f"task:    [green]{result.bound_task}[/green] (`evals run --file … --prompt …` uses it automatically)")
     else:
-        _out.print("[yellow]no clean bind[/yellow] — choose a contract below and pass it as --task")
+        _out.print("[yellow]no clear match[/yellow] — choose a task below and pass it as --task")
     if result.message:
         _out.print(result.message)
     if result.proposals:
@@ -350,17 +350,17 @@ evals_app.add_typer(sets_app, name="sets")
 def sets_create(
     ctx: typer.Context,
     file: str = typer.Option(..., "--file", help="JSONL file of items (one object per line)."),
-    intent: str = typer.Option(..., "--intent", help="One sentence: what the model should do with each item."),
-    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; the binder resolves --intent otherwise)."),
+    prompt: str = typer.Option(..., "--prompt", help="One sentence: what the model should do with each item."),
+    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; Pareta works out the scoring from --prompt otherwise)."),
     name: Optional[str] = typer.Option(None, "--name", help="Optional eval-set name."),
 ) -> None:
-    """Create an eval set from a JSONL file of items. `--intent` (what the model
-    should do with each item) is required; the binder resolves it to a grading
-    contract, or pin one with `--task`."""
+    """Create an eval set from a JSONL file of items. `--prompt` (what the model
+    should do with each item) is required; Pareta works out the scoring from
+    it, or pin a task with `--task`."""
     state = _state(ctx)
     try:
         items = _read_jsonl(file)
-        es = _client().evals.sets.create(items=items, intent=intent, task=task, name=name)
+        es = _client().evals.sets.create(items=items, prompt=prompt, task=task, name=name)
     except (ValueError, TypeError) as e:
         _err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)

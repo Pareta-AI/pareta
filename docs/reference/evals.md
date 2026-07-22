@@ -1,6 +1,6 @@
 # `evals`: evaluate models on your own data
 
-`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta a task — the [grading contract](./tasks.md) that names your rows' shape and scorer (`tasks.match` finds it from a plain-English description of your dataset) — and a list of labeled items, name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+`client.evals` runs the only benchmark that matters: how `model="auto"` scores on **your** rows. You hand Pareta your labeled rows and one sentence saying what you want done with them (pin a [task](./tasks.md) only if you want to), name the candidates — `"auto"`, plus the frontier baselines to beat — and get back per-candidate quality with 95% confidence intervals and per-item cost. The platform scores everything with the task's scorer, runs every candidate on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
 
 The namespace has three parts:
 
@@ -24,10 +24,10 @@ pa = Pareta.from_env()  # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 
 ```python
 run = pa.evals.runs.create(
-    task="contract-key-fields",
+    prompt="extract the effective date from each contract",
     items=[
-        {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
-        {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
+        {"input": {"contract_text": "Effective as of January 1, 2026, ..."}, "expected_output": {"effective_date": "2026-01-01"}},
+        {"input": {"contract_text": "This Agreement terminates on 2027-12-31 ..."}, "expected_output": {"termination_date": "2027-12-31"}},
     ],
     models=["auto"],         # the product under test
     frontier="benchmarked",  # vendor baselines benchmarked on this task
@@ -54,32 +54,34 @@ An eval set is your rows bound to a task, stored server-side and reusable across
 ### `sets.create`
 
 ```python
-def create(self, *, task: str, items: list[dict], name: str | None = None) -> EvalSet
+def create(self, *, items: list[dict], prompt: str, task: str | None = None,
+           name: str | None = None) -> EvalSet
 ```
 
 `POST /v1/eval-sets`
 
-- `task` (required): the task id. Carries the scorer and the input schema.
-- `items` (required, non-empty): your evaluation rows. Each is a dict in the task's input schema; the SDK serializes them to JSONL on the wire. An empty list raises `ValueError` before any request goes out.
+- `items` (required, non-empty): your evaluation rows — each a dict of the form `{"input": {...}, "expected_output": {...}}`, both values JSON objects: the input the model sees and the gold answer the scorer grades against. Serialized to JSONL on the wire. An empty list raises `ValueError` before any request goes out.
+- `prompt` (required): one sentence saying what you want done with each row, the way you'd prompt any model. Pareta works out how to score the results from it; if it doesn't line up with the data, `create` refuses with suggestions instead of guessing. Empty raises `ValueError` client-side (capped at 500 chars).
+- `task` (optional): pin a specific scoring setup by id. Most callers never need it.
 - `name` (optional): defaults to `f"sdk eval set ({len(items)} items)"`.
 
 ```python
 eval_set = pa.evals.sets.create(
-    task="contract-key-fields",
+    prompt="extract the effective and termination dates from each contract",
     items=[
-        {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
-        {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
+        {"input": {"contract_text": "Effective as of January 1, 2026, ..."}, "expected_output": {"effective_date": "2026-01-01"}},
+        {"input": {"contract_text": "This Agreement terminates on 2027-12-31 ..."}, "expected_output": {"termination_date": "2027-12-31"}},
     ],
     name="Q2 contracts sample",
 )
 
 print(eval_set.id)               # pass this to runs.create(eval_set=...)
-print(eval_set.task_id)          # "contract-key-fields"
+print(eval_set.prompt)           # what you asked for, stored on the set
 print(eval_set.item_count)       # 2
-print(eval_set.scoring_strategy) # e.g. "extraction": how this task is scored
+print(eval_set.scoring_strategy) # how it will be scored
 ```
 
-The exact row fields (`input`, `expected`, and any others) follow the task you chose. To inspect a task's schema and pull sample rows before formatting yours, use `pa.tasks.retrieve(task_id, examples_n=...)`. See [`tasks`](./tasks.md).
+Every row is `{"input": {...}, "expected_output": {...}}`; the field names *inside* those two objects follow the task you chose. To inspect a task's schema and pull sample rows before formatting yours, use `pa.tasks.retrieve(task_id, examples_n=...)`. See [`tasks`](./tasks.md).
 
 Returns an [`EvalSet`](#evalset).
 
@@ -144,10 +146,11 @@ Attaches a binary document (PDF, image, scan) to one row's blob field. Use this 
 
 ```python
 eval_set = pa.evals.sets.create(
-    task="invoice-extraction",
+    prompt="extract the total and vendor from each invoice",
+    task="invoice-extraction",   # pinned: blob rows carry no text to infer from
     items=[
-        {"expected": {"total": "1240.00", "vendor": "Katana ML"}},  # doc attached next
-        {"expected": {"total": "89.50", "vendor": "Acme"}},
+        {"expected_output": {"total": "1240.00", "vendor": "Katana ML"}},  # doc attached next
+        {"expected_output": {"total": "89.50", "vendor": "Acme"}},
     ],
 )
 
@@ -181,6 +184,7 @@ def create(
     eval_set: str | None = None,
     task: str | None = None,
     items: list[dict] | None = None,
+    prompt: str | None = None,
     models,
     frontier=None,
     name: str | None = None,
@@ -192,7 +196,7 @@ def create(
 
 `POST /v1/eval-runs`
 
-You drive it one of two ways. Pass **`eval_set=<id>`** to run against an existing set, **or** pass **`task=...` + `items=...`** to create a set inline in the same call. Passing neither raises `ValueError`.
+You drive it one of two ways. Pass **`eval_set=<id>`** to run against an existing set, **or** pass **`items=...` + `prompt=...`** to create a set inline in the same call (`task=` optional, to pin). Passing neither raises `ValueError`.
 
 - `models` (required): the candidate list — pass `["auto"]`. Required even when `frontier` is set; an empty `models` with no frontier ids raises `ValueError`.
 - `frontier` (default `None`): the vendor baselines to score alongside your candidates. Keyword or explicit list, [resolved SDK-side](#frontier-resolution).
@@ -211,8 +215,8 @@ run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], wait=True)
 
 ```python
 run = pa.evals.runs.create(
-    task="contract-key-fields",
-    items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
+    prompt="extract the effective date from each contract",
+    items=[{"input": {"contract_text": "..."}, "expected_output": {"effective_date": "2026-01-01"}}],
     models=["auto"],
     frontier="benchmarked",
     wait=True,
@@ -355,8 +359,8 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         eval_set = await pa.evals.sets.create(
-            task="contract-key-fields",
-            items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
+            prompt="extract the key fields from each contract",
+            items=[{"input": {"contract_text": "..."}, "expected_output": {"effective_date": "2026-01-01"}}],
         )
         run = await pa.evals.runs.create(
             eval_set=eval_set.id,

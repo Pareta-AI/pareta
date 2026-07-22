@@ -69,7 +69,7 @@ The OpenAI SDK is built around calling a model you name. Pareta's reason to exis
 | --- | --- | --- |
 | Call a model | `client.chat.completions.create(...)` | works as-is (OpenAI-compatible) |
 | Benchmark `"auto"` vs frontier baselines on your data | not available | `pa.evals.runs.create(...)` |
-| Find the grading contract for your eval data | not available | `pa.tasks.match(...)` |
+| Find how your eval data gets scored | not available | `pa.tasks.match(...)` |
 | Watch requests, success rate, spend, projected savings | not available | `pa.auto.metrics()` |
 | Run one prompt against a frontier vendor, side-by-side | not available | `pa.auto.compare_frontier(...)` |
 | List callable model ids | `client.models.list()` (vendor catalog) | `pa.models.list()` (the single `"auto"` entry) |
@@ -303,10 +303,10 @@ pa = Pareta.from_env()
 run = pa.evals.runs.create(
     task="contract-key-fields",
     items=[
-        {"input": "...", "expected": "..."},
-        {"input": "...", "expected": "..."},
+        {"input": {"contract_text": "..."}, "expected_output": {"effective_date": "..."}},
+        {"input": {"contract_text": "..."}, "expected_output": {"effective_date": "..."}},
     ],
-    intent="extract the key fields from each contract",
+    prompt="extract the key fields from each contract",
     models=["auto"],          # the candidate you ship
     frontier="benchmarked",   # frontier models benchmarked on this task, as baselines
     wait=True,                # poll until terminal, then return
@@ -329,10 +329,10 @@ const pa = Pareta.fromEnv();
 const run = await pa.evals.runs.create({
   task: "contract-key-fields",
   items: [
-    { input: "...", expected: "..." },
-    { input: "...", expected: "..." },
+    { input: { contract_text: "..." }, expected_output: { effective_date: "..." } },
+    { input: { contract_text: "..." }, expected_output: { effective_date: "..." } },
   ],
-  intent: "extract the key fields from each contract",
+  prompt: "extract the key fields from each contract",
   models: ["auto"],          // the candidate you ship
   frontier: "benchmarked",   // frontier models benchmarked on this task, as baselines
   wait: true,                // poll until terminal, then return
@@ -350,7 +350,7 @@ for (const r of run.results) {
 
 ## Discovery: checking what auto covers
 
-Benchmarking on your own data needs a grading contract, and `tasks.match(...)` finds it from a plain-English description of your dataset — the `task` an eval run validates rows against and scores with. Again, no OpenAI equivalent:
+Benchmarking on your own data needs a way to score the results, and `tasks.match(...)` finds it from a plain-English description of your dataset — the `task` an eval run validates rows against and scores with. Again, no OpenAI equivalent:
 
 **Python**
 

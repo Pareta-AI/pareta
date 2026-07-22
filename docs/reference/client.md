@@ -228,7 +228,7 @@ A tour of the core namespaces against one client:
 from pareta import Pareta
 
 with Pareta.from_env() as pa:
-    # tasks — which grading contract scores my dataset?
+    # tasks — how will my dataset be scored?
     match = pa.tasks.match("extract key fields from contracts")
     print(match.type, match.chosen.task_id if match.chosen else None)
 
@@ -245,8 +245,8 @@ with Pareta.from_env() as pa:
 
     # evals — benchmark "auto" against frontier baselines on your own data
     run = pa.evals.runs.create(
-        task="contract-key-fields",
-        items=[{"input": "…", "expected": "…"}],
+        prompt="extract the key fields from each contract",
+        items=[{"input": {"contract_text": "…"}, "expected_output": {"effective_date": "…"}}],
         models=["auto"],
         frontier="benchmarked",
         wait=True,
@@ -299,7 +299,7 @@ These hold no matter how you build the client. They are why there is no GPU knob
 
 - [Configuration](../guide/configuration.md) — the full configuration guide: `from_env`, `base_url`, timeouts, retries, custom transports, and the configuration cookbook.
 - [Inference](../guide/inference.md) — `chat.completions.create(model="auto", ...)`, streaming, and metering.
-- [tasks](./tasks.md) — the grading contracts evals score against; `match` finds the right one for your dataset.
+- [tasks](./tasks.md) — how evals score your data; `match` finds the right scoring for your dataset.
 - [Evaluation](../guide/evaluation.md) — benchmark `"auto"` on your own data, including `run.cost`.
 - [Errors and retries](../guide/errors-and-retries.md) — the `ParetaError` hierarchy and retry behavior.
 - [Async](../guide/async.md) — the sync-vs-async mapping for every resource.

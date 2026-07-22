@@ -110,8 +110,8 @@ pareta auto metrics                                     # your auto traffic, rol
 pareta auto compare "…prompt…" --frontier gpt-5.5       # auto vs a frontier, metered
 
 pareta tasks match "extract fields from invoices"       # intent → task
-pareta evals run --task invoice-extraction --file rows.jsonl \
-  --models auto --frontier --wait                       # prove auto on your data
+pareta evals run --prompt "extract the total from each invoice" \
+  --file rows.jsonl --models auto --frontier --wait     # prove auto on your data
 ```
 
 Add `--json` to any command for machine-readable output; `pareta --help` (or

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0 — 2026-07-22
+
+**Breaking: the eval parameter `intent` is renamed `prompt`** — say what you
+want done with each row, like a prompt. `evals.create(items=..., prompt=...)`,
+`propose_contract(items=..., prompt=...)`, CLI `--prompt`, MCP `prompt`.
+`EvalSet.prompt` / `ProposalResult.prompt`. No alias: 2.x calls using intent=
+get an actionable 400 from the server.
+
 ## 2.1.0 — 2026-07-22
 
 **Every chat call now returns its receipt.** The API has always sent the

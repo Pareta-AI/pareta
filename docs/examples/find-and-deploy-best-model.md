@@ -191,20 +191,21 @@ your data. You can create the eval set inline in the same call by passing
 # Shortlist: top open models off the leaderboard (these are deployable aliases).
 candidates = [e.name for e in lb.models if e.kind == "open"][:3]
 
-# Your data: one dict per row. Shape depends on the task's scorer; for an
-# extraction task each row carries the input plus the expected fields.
+# Your data: one dict per row, each {"input": {...}, "expected_output": {...}}.
+# The inner field names follow the task's schema; for an extraction task the
+# input carries the text and expected_output the gold fields.
 items = [
-    {"input": "MASTER SERVICES AGREEMENT ... Term: 24 months ... Fee: $48,000",
-     "expected": {"term_months": 24, "annual_fee_usd": 48000}},
-    {"input": "STATEMENT OF WORK ... Term: 12 months ... Fee: $9,500",
-     "expected": {"term_months": 12, "annual_fee_usd": 9500}},
+    {"input": {"contract_text": "MASTER SERVICES AGREEMENT ... Term: 24 months ... Fee: $48,000"},
+     "expected_output": {"term_months": 24, "annual_fee_usd": 48000}},
+    {"input": {"contract_text": "STATEMENT OF WORK ... Term: 12 months ... Fee: $9,500"},
+     "expected_output": {"term_months": 12, "annual_fee_usd": 9500}},
     # ... more rows. More rows means tighter confidence intervals.
 ]
 
 run = pa.evals.runs.create(
     task=task_id,
     items=items,
-    intent="extract the key fields from each contract",
+    prompt="extract the key fields from each contract",
     models=candidates,        # open candidates to score
     frontier="benchmarked",   # baselines on this task's leaderboard, for context
     name="contracts shortlist v1",
@@ -218,20 +219,21 @@ run = pa.evals.runs.create(
 // Shortlist: top open models off the leaderboard (these are deployable aliases).
 const candidates = lb.models.filter((e) => e.kind === "open").slice(0, 3).map((e) => e.name);
 
-// Your data: one object per row. Shape depends on the task's scorer; for an
-// extraction task each row carries the input plus the expected fields.
+// Your data: one object per row, each { input: {...}, expected_output: {...} }.
+// The inner field names follow the task's schema; for an extraction task the
+// input carries the text and expected_output the gold fields.
 const items = [
-  { input: "MASTER SERVICES AGREEMENT ... Term: 24 months ... Fee: $48,000",
-    expected: { term_months: 24, annual_fee_usd: 48000 } },
-  { input: "STATEMENT OF WORK ... Term: 12 months ... Fee: $9,500",
-    expected: { term_months: 12, annual_fee_usd: 9500 } },
+  { input: { contract_text: "MASTER SERVICES AGREEMENT ... Term: 24 months ... Fee: $48,000" },
+    expected_output: { term_months: 24, annual_fee_usd: 48000 } },
+  { input: { contract_text: "STATEMENT OF WORK ... Term: 12 months ... Fee: $9,500" },
+    expected_output: { term_months: 12, annual_fee_usd: 9500 } },
   // ... more rows. More rows means tighter confidence intervals.
 ];
 
 const run = await pa.evals.runs.create({
   task: taskId,
   items,
-  intent: "extract the key fields from each contract",
+  prompt: "extract the key fields from each contract",
   models: candidates,        // open candidates to score
   frontier: "benchmarked",   // baselines on this task's leaderboard, for context
   name: "contracts shortlist v1",
@@ -241,9 +243,9 @@ const run = await pa.evals.runs.create({
 
 `evals.runs.create` parameters:
 
-- Provide **either** `eval_set=<id>` (an existing set) **or** `items=` + `intent=`
-  to create one inline (`task=` optional — pass it to pin a specific grading
-  contract, or omit it and the binder resolves your intent + the data's shape).
+- Provide **either** `eval_set=<id>` (an existing set) **or** `items=` + `prompt=`
+  to create one inline (`task=` optional — pass it to pin a specific task, or
+  omit it and Pareta works out the scoring from your prompt + the data's shape).
   `models=` is required and is the list of open candidate aliases to score.
 - `frontier=` controls the vendor baselines, resolved SDK-side:
   - `None` or `"none"` -> no baselines.
@@ -257,7 +259,7 @@ const run = await pa.evals.runs.create({
   `wait=False` returns immediately with a `"running"`/queued run; poll it yourself
   with `pa.evals.runs.wait(run.id)` or `pa.evals.runs.retrieve(run.id)`.
 
-`create` raises `ValueError` if neither `eval_set` nor `items`+`intent` is given,
+`create` raises `ValueError` if neither `eval_set` nor `items`+`prompt` is given,
 and `ValueError` if `items` is empty.
 
 This call is metered. The org balance is debited for the open and frontier compute
@@ -270,7 +272,7 @@ from pareta import InsufficientCreditsError
 
 try:
     run = pa.evals.runs.create(task=task_id, items=items,
-                               intent="extract the key fields from each contract",
+                               prompt="extract the key fields from each contract",
                                models=candidates, frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     raise SystemExit("Org balance is empty. Top up in the dashboard (browser-only).")
@@ -283,7 +285,7 @@ import { InsufficientCreditsError } from "pareta";
 
 try {
   const run = await pa.evals.runs.create({
-    task: taskId, items, intent: "extract the key fields from each contract",
+    task: taskId, items, prompt: "extract the key fields from each contract",
     models: candidates, frontier: "benchmarked", wait: true,
   });
 } catch (e) {
@@ -304,7 +306,7 @@ against the set id:
 
 ```python
 es = pa.evals.sets.create(task=task_id, items=items,
-                          intent="extract the key fields from each contract",
+                          prompt="extract the key fields from each contract",
                           name="contracts with PDFs")
 
 # Attach a PDF to row 0's "document" blob field. Files under 5 MiB go inline;
@@ -319,7 +321,7 @@ run = pa.evals.runs.create(eval_set=es.id, models=candidates,
 
 ```typescript
 const es = await pa.evals.sets.create({
-  task: taskId, items, intent: "extract the key fields from each contract",
+  task: taskId, items, prompt: "extract the key fields from each contract",
   name: "contracts with PDFs",
 });
 
@@ -566,10 +568,10 @@ lb = pa.tasks.leaderboard(task_id)
 candidates = [e.name for e in lb.models if e.kind == "open"][:3]
 
 # 3. prove it on your data (open candidates + benchmarked frontier baselines)
-items = [{"input": "...", "expected": {...}}]  # your rows
+items = [{"input": {"contract_text": "..."}, "expected_output": {...}}]  # your rows
 try:
     run = pa.evals.runs.create(task=task_id, items=items,
-                               intent="extract the key fields from each contract",
+                               prompt="extract the key fields from each contract",
                                models=candidates, frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     raise SystemExit("Top up the org balance in the dashboard (browser-only).")
@@ -606,11 +608,11 @@ const lb = await pa.tasks.leaderboard(taskId);
 const candidates = lb.models.filter((e) => e.kind === "open").slice(0, 3).map((e) => e.name);
 
 // 3. prove it on your data (open candidates + benchmarked frontier baselines)
-const items = [{ input: "...", expected: {} }];  // your rows
+const items = [{ input: { contract_text: "..." }, expected_output: {} }];  // your rows
 let run;
 try {
   run = await pa.evals.runs.create({
-    task: taskId, items, intent: "extract the key fields from each contract",
+    task: taskId, items, prompt: "extract the key fields from each contract",
     models: candidates, frontier: "benchmarked", wait: true,
   });
 } catch (e) {
@@ -663,7 +665,7 @@ async def main():
         task_id = m.chosen.task_id
         run = await pa.evals.runs.create(
             task=task_id, items=[...],
-            intent="extract the key fields from each contract",
+            prompt="extract the key fields from each contract",
             models=[...], frontier="benchmarked", wait=True)
         winner = max((r for r in run.results if r.kind == "open"),
                      key=lambda r: (r.quality_mean or 0))
@@ -690,7 +692,7 @@ async function main() {
   const m = await pa.tasks.match("extract the key fields from a contract");
   const taskId = m.chosen.taskId;
   const run = await pa.evals.runs.create({
-    task: taskId, items: [], intent: "extract the key fields from each contract",
+    task: taskId, items: [], prompt: "extract the key fields from each contract",
     models: [], frontier: "benchmarked", wait: true,
   });
   const winner = run.results

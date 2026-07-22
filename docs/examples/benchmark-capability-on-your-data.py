@@ -26,15 +26,16 @@ from pareta import Pareta
 
 TASK = "general-chat"  # the deployable task behind capability:chat
 
-# Your own labeled rows. The field names match the task's input/output schema;
-# for general-chat that's a prompt and a reference answer the scorer grades against.
+# Your own labeled rows. Every row is {"input": {...}, "expected_output": {...}}
+# (both JSON objects); the inner field names match the task's input/output schema —
+# for general-chat that's a prompt in, and a reference response the scorer grades against.
 ROWS = [
-    {"prompt": "Summarize in one sentence: the meeting is moved to 3pm Friday.",
-     "reference": "The meeting is now at 3pm on Friday."},
-    {"prompt": "Rewrite politely: send me the report now.",
-     "reference": "Could you please send me the report when you have a moment?"},
-    {"prompt": "What is the capital of France?",
-     "reference": "Paris."},
+    {"input": {"prompt": "Summarize in one sentence: the meeting is moved to 3pm Friday."},
+     "expected_output": {"response": "The meeting is now at 3pm on Friday."}},
+    {"input": {"prompt": "Rewrite politely: send me the report now."},
+     "expected_output": {"response": "Could you please send me the report when you have a moment?"}},
+    {"input": {"prompt": "What is the capital of France?"},
+     "expected_output": {"response": "Paris."}},
 ]
 
 
@@ -53,13 +54,13 @@ def main() -> None:
 
     # Run YOUR rows through the recommended open model + the benchmarked frontier
     # models in one call. evals.runs.create builds the eval set inline (task= +
-    # items= + intent=), kicks off the run, and (wait=True) polls to completion.
+    # items= + prompt=), kicks off the run, and (wait=True) polls to completion.
     candidates = [lb.recommended] if lb.recommended else open_models[:1]
     print(f"\nbenchmarking {candidates} vs frontier on {len(ROWS)} of your rows ...")
     run = pa.evals.runs.create(
         task=TASK,
         items=ROWS,
-        intent="answer each prompt as instructed",
+        prompt="answer each prompt as instructed",
         models=candidates,          # open candidate(s)
         frontier="benchmarked",     # add the task's benchmarked frontier baselines
         wait=True,

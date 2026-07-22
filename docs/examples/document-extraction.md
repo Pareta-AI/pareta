@@ -88,7 +88,7 @@ Create the set first. `items` must be non-empty. The blob field (here `document`
 items = [
     {
         "document": None,                       # filled by upload_document below
-        "expected": {
+        "expected_output": {
             "invoice_number": "INV-4471",
             "invoice_date": "2026-03-14",
             "total": "1284.50",
@@ -98,7 +98,7 @@ items = [
     },
     {
         "document": None,
-        "expected": {
+        "expected_output": {
             "invoice_number": "INV-4472",
             "invoice_date": "2026-03-15",
             "total": "962.00",
@@ -111,7 +111,7 @@ items = [
 eval_set = pa.evals.sets.create(
     task="invoice-extraction",
     items=items,
-    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+    prompt="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
     name="Q1 vendor invoices (10 docs)",   # optional; auto-named if omitted
 )
 print(eval_set.id, eval_set.item_count, eval_set.scoring_strategy)
@@ -124,7 +124,7 @@ print(eval_set.id, eval_set.item_count, eval_set.scoring_strategy)
 const items = [
   {
     document: null,                          // filled by uploadDocument below
-    expected: {
+    expected_output: {
       invoice_number: "INV-4471",
       invoice_date: "2026-03-14",
       total: "1284.50",
@@ -134,7 +134,7 @@ const items = [
   },
   {
     document: null,
-    expected: {
+    expected_output: {
       invoice_number: "INV-4472",
       invoice_date: "2026-03-15",
       total: "962.00",
@@ -147,7 +147,7 @@ const items = [
 const evalSet = await pa.evals.sets.create({
   task: "invoice-extraction",
   items,
-  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  prompt: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
   name: "Q1 vendor invoices (10 docs)",   // optional; auto-named if omitted
 });
 console.log(evalSet.id, evalSet.itemCount, evalSet.scoringStrategy);
@@ -261,7 +261,7 @@ let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], fr
 run = await pa.evals.runs.wait(run.id, { pollInterval: 5, timeout: 1200 });
 ```
 
-If you would rather not pre-create the set, `runs.create` accepts `items=… + intent=…` inline (`task=…` optional) and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
+If you would rather not pre-create the set, `runs.create` accepts `items=… + prompt=…` inline (`task=…` optional) and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
 
 ### What `frontier=` accepts
 
@@ -473,7 +473,7 @@ async def main():
     async with AsyncPareta.from_env() as pa:
         es = await pa.evals.sets.create(
             task="invoice-extraction", items=items,
-            intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice")
+            prompt="extract invoice_number, invoice_date, total, currency, and vendor from each invoice")
         await pa.evals.sets.upload_document(es.id, "invoices/INV-4471.pdf", idx=0, field_name="document")
 
         run = await pa.evals.runs.create(
@@ -502,7 +502,7 @@ async function main() {
 
   const es = await pa.evals.sets.create({
     task: "invoice-extraction", items,
-    intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+    prompt: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
   });
   await pa.evals.sets.uploadDocument(es.id, "invoices/INV-4471.pdf", { idx: 0, fieldName: "document" });
 
@@ -534,7 +534,7 @@ TASK = "invoice-extraction"
 # 1. eval set from your documents
 es = pa.evals.sets.create(
     task=TASK, items=items,
-    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+    prompt="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
     name="vendor invoices")
 for idx, path in enumerate(invoices):
     pa.evals.sets.upload_document(es.id, path, idx=idx, field_name="document")
@@ -569,7 +569,7 @@ const TASK = "invoice-extraction";
 // 1. eval set from your documents
 const es = await pa.evals.sets.create({
   task: TASK, items,
-  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  prompt: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
   name: "vendor invoices",
 });
 for (let idx = 0; idx < invoices.length; idx++) {

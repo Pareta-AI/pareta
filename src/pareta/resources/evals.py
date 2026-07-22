@@ -1,17 +1,17 @@
 """`client.evals` — eval sets + runs (bring-your-own-data evaluation).
 
-    # An eval set is DATA + INTENT (v2, breaking): intent is REQUIRED, task is
-    # OPTIONAL — the binder resolves your intent + the data's shape to a
-    # grading contract.
-    pa.evals.propose_contract(items=[…], intent="…")   # preview the binding
-    pa.evals.sets.create(items=[…], intent="…")        # auto-binds a clean match
-    pa.evals.sets.create(items=[…], intent="…", task="invoice-extraction")  # or pin
+    # An eval set is DATA + PROMPT (v3, breaking): prompt is REQUIRED, task is
+    # OPTIONAL — Pareta works out how to score the results from your prompt +
+    # the data's shape.
+    pa.evals.propose_contract(items=[…], prompt="…")   # preview the scoring
+    pa.evals.sets.create(items=[…], prompt="…")        # a clean match is used automatically
+    pa.evals.sets.create(items=[…], prompt="…", task="invoice-extraction")  # or pin
     pa.evals.sets.upload_document(set_id, file, idx=…, field_name=…)  # blob tasks
     run = pa.evals.runs.create(eval_set=set_id, models=[…], wait=True)
-    # or, in one call: runs.create(items=[…], intent="…", models=[…], wait=True)
+    # or, in one call: runs.create(items=[…], prompt="…", models=[…], wait=True)
 
-`create` (and the inline `runs.create` sugar) require `intent`; with no `task`
-they call `propose_contract` and auto-bind ONLY a clean single high/medium match
+`create` (and the inline `runs.create` sugar) require `prompt`; with no `task`
+they call `propose_contract` and accept ONLY a clean single high/medium match
 — a conflict, split, or ambiguity raises with the proposals so you pin `task=`.
 
 Runs are metered (the org balance is debited for the compute); `run.cost` is the
@@ -69,76 +69,77 @@ def _guess_mime(filename: str, override: str | None) -> str:
     return override or mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
 
-def _require_intent(intent: str | None) -> str:
-    """CB1 (v2 breaking): an eval set is DATA + INTENT — the same rows can mean
-    different tasks, and only the caller knows which. Enforced client-side so
-    the error is actionable before the request goes out (the server also 400s
-    an intent-less create, which is how pre-v2 SDKs surface the change)."""
-    intent = (intent or "").strip()
-    if not intent:
+def _require_prompt(prompt: str | None) -> str:
+    """CB1 (v3 breaking rename): an eval set is DATA + PROMPT — the same rows
+    can mean different tasks, and only the caller knows which. Enforced
+    client-side so the error is actionable before the request goes out (the
+    server also 400s a prompt-less create, which is how pre-v3 SDKs surface
+    the change)."""
+    prompt = (prompt or "").strip()
+    if not prompt:
         raise ValueError(
-            "intent is required: one sentence describing what the model should "
+            "prompt is required: one sentence describing what the model should "
             "do with each item (e.g. \"extract vendor, total and date from each "
-            "invoice\"). Pass intent=\"...\" to evals.create / propose_contract.")
-    return intent[:500]
+            "invoice\"). Pass prompt=\"...\" to evals.create / propose_contract.")
+    return prompt[:500]
 
 
-def _items_jsonl(task: str, items: list[dict], intent: str,
+def _items_jsonl(task: str, items: list[dict], prompt: str,
                  name: str | None) -> tuple[dict, dict]:
     if not items:
         raise ValueError("items is required and must be non-empty")
     jsonl = "\n".join(json.dumps(it) for it in items).encode("utf-8")
     files = {"items": (f"items.{task}.jsonl", jsonl, "application/jsonl")}
-    data = {"task_id": task, "intent": intent,
+    data = {"task_id": task, "prompt": prompt,
             "name": name or f"sdk eval set ({len(items)} items)"}
     return files, data
 
 
-def _propose_multipart(items: list[dict], intent: str) -> tuple[dict, dict]:
+def _propose_multipart(items: list[dict], prompt: str) -> tuple[dict, dict]:
     if not items:
         raise ValueError("items is required and must be non-empty")
     jsonl = "\n".join(json.dumps(it) for it in items).encode("utf-8")
     return ({"items": ("items.jsonl", jsonl, "application/jsonl")},
-            {"intent": intent})
+            {"prompt": prompt})
 
 
 def _bind_error(result: ProposalResult) -> ParetaError:
     """Turn a non-clean propose result into an actionable create-time error:
-    the binder couldn't safely pick a contract for the stated intent, so the
-    caller must choose. Quotes the intent back and lists what fit."""
-    intent = result.intent or ""
+    Pareta couldn't safely work out how to score this for the stated prompt,
+    so the caller must choose. Quotes the prompt back and lists what fit."""
+    prompt = result.prompt or ""
     if result.conflict:
         c = result.conflict
         return ParetaError(
-            f"intent {intent!r} describes a different job than the data's "
+            f"prompt {prompt!r} describes a different job than the data's "
             f"shape supports (reads as {c.get('intended_task')!r}: "
-            f"{c.get('reasoning')}). Pass task=<id> to pin a contract, or "
-            "revise the intent.")
+            f"{c.get('reasoning')}). Pass task=<id> to pin the task, or "
+            "revise the prompt.")
     if result.split:
         s = result.split
         return ParetaError(
             f"the dataset looks MIXED — {s.get('validated_n')}/{s.get('total_n')} "
             f"items fit {s.get('closest_task')!r}, the rest a different shape. "
             "Split the set or pass task=<id>.")
-    # Zero-fit: the binder offers the custom-eval universal FLOOR (judged
-    # win-rate vs the anchor). Per the precision ladder that's the user's
-    # CHOICE — surface it explicitly rather than silently binding it.
+    # Zero-fit: only "custom-eval" is on offer — a judge panel grades each
+    # answer against the stated prompt. Opting in is the user's CHOICE —
+    # surface it explicitly rather than picking it silently. (CB1 spec §4.)
     props = result.proposals
     if len(props) == 1 and props[0].task_id == "custom-eval":
         warn = f" ({props[0].warning})" if props[0].warning else ""
         return ParetaError(
-            f"no specific grading contract fits this data for intent {intent!r}. "
-            "The custom-eval universal floor is available — it grades by judged "
-            f"win-rate vs the frontier anchor.{warn} Pass task=\"custom-eval\" to "
-            "use it, or revise the data/intent for a specific contract.")
+            f"no ready-made scorer fits this data for prompt {prompt!r}. "
+            "A judge panel can grade each answer against what you asked for "
+            f"(win rate vs gpt-5.5) — pass task=\"custom-eval\" to use it.{warn} "
+            "Or revise the data/prompt so a specific task fits.")
     options = [p.task_id for p in props] or (
         [result.closest_task] if result.closest_task else [])
     hint = (f" Candidates: {', '.join(o for o in options if o)}."
             if any(options) else "")
     return ParetaError(
-        f"could not confidently bind a grading contract for intent {intent!r}."
-        f"{hint} Pass task=<id> to pin one, or inspect "
-        "evals.propose_contract(items, intent).")
+        f"couldn't work out how to score this for prompt {prompt!r}."
+        f"{hint} Pass task=<id> to choose yourself, or inspect "
+        "evals.propose_contract(items, prompt).")
 
 
 def _merge_candidates(models, frontier_ids) -> list[str]:
@@ -163,20 +164,21 @@ class EvalSets:
     def __init__(self, client):
         self._client = client
 
-    def create(self, *, items: list[dict], intent: str, task: str | None = None,
+    def create(self, *, items: list[dict], prompt: str, task: str | None = None,
                name: str | None = None) -> EvalSet:
-        """Persist an eval set from your rows. `intent` is REQUIRED (v2): one
+        """Persist an eval set from your rows. `prompt` is REQUIRED (v3): one
         sentence on what the model should do with each item. `task` is
-        OPTIONAL — omit it and the binder resolves your intent + the data's
-        shape to a grading contract (auto-binds a clean single match; raises
-        with the proposals otherwise). Pass `task=<id>` to pin one explicitly."""
-        intent = _require_intent(intent)
+        OPTIONAL — omit it and Pareta works out how to score the results from
+        your prompt + the data's shape (a clean single match is used; anything
+        ambiguous raises with the proposals). Pass `task=<id>` to pin one
+        explicitly."""
+        prompt = _require_prompt(prompt)
         if task is None:
-            proposal = Evals(self._client).propose_contract(items=items, intent=intent)
+            proposal = Evals(self._client).propose_contract(items=items, prompt=prompt)
             task = proposal.bound_task
             if task is None:
                 raise _bind_error(proposal)
-        files, data = _items_jsonl(task, items, intent, name)
+        files, data = _items_jsonl(task, items, prompt, name)
         return self._client.request("POST", _BASE, files=files, data=data, cast=_eval_set_from_create)
 
     def list(self) -> list[EvalSet]:
@@ -235,15 +237,15 @@ class EvalRuns:
         return _resolve_frontier_from_roster(frontier, roster)
 
     def create(self, *, eval_set: str | None = None, task: str | None = None,
-               items: list[dict] | None = None, intent: str | None = None,
+               items: list[dict] | None = None, prompt: str | None = None,
                models, frontier=None,
                name: str | None = None, wait: bool = False,
                poll_interval: float = 3.0, timeout: float = 900.0) -> EvalRun:
         if eval_set is None:
             if not items:
-                raise ValueError("pass eval_set=<id>, or items=… (+ intent=…) to create one")
+                raise ValueError("pass eval_set=<id>, or items=… (+ prompt=…) to create one")
             eval_set = EvalSets(self._client).create(
-                items=items, intent=intent, task=task, name=name).id
+                items=items, prompt=prompt, task=task, name=name).id
         frontier_ids = self._frontier_ids(frontier, eval_set, task)
         candidate_model_ids = _merge_candidates(models, frontier_ids)
         started = self._client.request(
@@ -273,14 +275,14 @@ class Evals:
         self.sets = EvalSets(client)
         self.runs = EvalRuns(client)
 
-    def propose_contract(self, *, items: list[dict], intent: str) -> ProposalResult:
-        """Which grading contract fits your data under your stated `intent`?
+    def propose_contract(self, *, items: list[dict], prompt: str) -> ProposalResult:
+        """How would your data be scored under your stated `prompt`?
         Stateless discovery — nothing is persisted. Returns a ProposalResult
-        (ranked proposals, the auto-bind decision, conflict/split reporting).
-        `create(items, intent)` calls this under the hood; use it directly to
-        preview the binding before committing."""
-        intent = _require_intent(intent)
-        files, data = _propose_multipart(items, intent)
+        (ranked proposals, the task a task-less create would use,
+        conflict/split reporting). `create(items, prompt)` calls this under
+        the hood; use it directly to preview the scoring before committing."""
+        prompt = _require_prompt(prompt)
+        files, data = _propose_multipart(items, prompt)
         return self._client.request("POST", _PROPOSE, files=files, data=data,
                                     cast=_proposal_result)
 
@@ -297,15 +299,15 @@ class AsyncEvalSets:
     def __init__(self, client):
         self._client = client
 
-    async def create(self, *, items: list[dict], intent: str, task: str | None = None,
+    async def create(self, *, items: list[dict], prompt: str, task: str | None = None,
                      name: str | None = None) -> EvalSet:
-        intent = _require_intent(intent)
+        prompt = _require_prompt(prompt)
         if task is None:
-            proposal = await AsyncEvals(self._client).propose_contract(items=items, intent=intent)
+            proposal = await AsyncEvals(self._client).propose_contract(items=items, prompt=prompt)
             task = proposal.bound_task
             if task is None:
                 raise _bind_error(proposal)
-        files, data = _items_jsonl(task, items, intent, name)
+        files, data = _items_jsonl(task, items, prompt, name)
         return await self._client.request("POST", _BASE, files=files, data=data, cast=_eval_set_from_create)
 
     async def list(self) -> list[EvalSet]:
@@ -360,15 +362,15 @@ class AsyncEvalRuns:
         return _resolve_frontier_from_roster(frontier, roster)
 
     async def create(self, *, eval_set: str | None = None, task: str | None = None,
-                     items: list[dict] | None = None, intent: str | None = None,
+                     items: list[dict] | None = None, prompt: str | None = None,
                      models, frontier=None,
                      name: str | None = None, wait: bool = False,
                      poll_interval: float = 3.0, timeout: float = 900.0) -> EvalRun:
         if eval_set is None:
             if not items:
-                raise ValueError("pass eval_set=<id>, or items=… (+ intent=…) to create one")
+                raise ValueError("pass eval_set=<id>, or items=… (+ prompt=…) to create one")
             created = await AsyncEvalSets(self._client).create(
-                items=items, intent=intent, task=task, name=name)
+                items=items, prompt=prompt, task=task, name=name)
             eval_set = created.id
         frontier_ids = await self._frontier_ids(frontier, eval_set, task)
         candidate_model_ids = _merge_candidates(models, frontier_ids)
@@ -400,9 +402,9 @@ class AsyncEvals:
         self.sets = AsyncEvalSets(client)
         self.runs = AsyncEvalRuns(client)
 
-    async def propose_contract(self, *, items: list[dict], intent: str) -> ProposalResult:
-        intent = _require_intent(intent)
-        files, data = _propose_multipart(items, intent)
+    async def propose_contract(self, *, items: list[dict], prompt: str) -> ProposalResult:
+        prompt = _require_prompt(prompt)
+        files, data = _propose_multipart(items, prompt)
         return await self._client.request("POST", _PROPOSE, files=files, data=data,
                                           cast=_proposal_result)
 

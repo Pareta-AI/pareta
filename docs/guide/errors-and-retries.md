@@ -349,9 +349,9 @@ they are programming errors, not server responses:
   or `messages` is empty.
 - [`tasks.match()`](../reference/tasks.md) raises `ValueError` if `query` is empty.
 - [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` or
-  `intent` is empty.
+  `prompt` is empty.
 - [`evals.runs.create()`](evaluation.md) raises `ValueError` if neither
-  `eval_set=` nor `items=` (with `intent=`) is supplied, and
+  `eval_set=` nor `items=` (with `prompt=`) is supplied, and
   `ValueError`/`TypeError` if `frontier=` is an unparseable keyword or a
   frontier keyword can't be resolved to a task.
 - [`evals.sets.upload_document()`](evaluation.md) raises `TypeError` if `file` is
@@ -524,8 +524,8 @@ from pareta import Pareta, ParetaError
 with Pareta.from_env() as pa:
     try:
         run = pa.evals.runs.create(
-            intent="extract the key fields from each contract",
-            items=[{"input": "...", "expected": "..."}],
+            prompt="extract the key fields from each contract",
+            items=[{"input": {"contract_text": "..."}, "expected_output": {...}}],
             models=["auto"],
             frontier="benchmarked",
             wait=True,
@@ -545,8 +545,8 @@ import { Pareta, ParetaError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   const run = await pa.evals.runs.create({
-    intent: "extract the key fields from each contract",
-    items: [{ input: "...", expected: "..." }],
+    prompt: "extract the key fields from each contract",
+    items: [{ input: { contract_text: "..." }, expected_output: {} }],
     models: ["auto"],
     frontier: "benchmarked",
     wait: true,

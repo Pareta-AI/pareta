@@ -384,7 +384,7 @@ console.log("requests (30d):", metrics.requests_30d);
 
 ### Run several eval runs in parallel
 
-`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `intent=` + `items=` creates the eval set and the run in one call.
+`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `prompt=` + `items=` creates the eval set and the run in one call.
 
 **Python**
 
@@ -394,11 +394,11 @@ from pareta import AsyncPareta
 
 JOBS = {
     "extract the payment amount from each contract": [
-        {"input": "Acme Corp agrees to pay $5,000 net 30.", "expected": {"amount": "5000"}},
-        {"input": "Total due: $1,200 by 2026-07-01.", "expected": {"amount": "1200"}},
+        {"input": {"contract_text": "Acme Corp agrees to pay $5,000 net 30."}, "expected_output": {"amount": "5000"}},
+        {"input": {"contract_text": "Total due: $1,200 by 2026-07-01."}, "expected_output": {"amount": "1200"}},
     ],
     "extract the total from each invoice": [
-        {"input": "INVOICE #4471 ... TOTAL $1,240.00 ...", "expected": {"total": "1240.00"}},
+        {"input": {"text": "INVOICE #4471 ... TOTAL $1,240.00 ..."}, "expected_output": {"total": "1240.00"}},
     ],
 }
 
@@ -409,10 +409,10 @@ async def main():
         runs = await asyncio.gather(
             *(
                 pa.evals.runs.create(
-                    intent=intent, items=items,
+                    prompt=prompt, items=items,
                     models=["auto"], frontier="benchmarked", wait=True,
                 )
-                for intent, items in JOBS.items()
+                for prompt, items in JOBS.items()
             )
         )
         for run in runs:
@@ -433,11 +433,11 @@ import { Pareta } from "pareta";
 
 const JOBS: Record<string, Array<Record<string, unknown>>> = {
   "extract the payment amount from each contract": [
-    { input: "Acme Corp agrees to pay $5,000 net 30.", expected: { amount: "5000" } },
-    { input: "Total due: $1,200 by 2026-07-01.", expected: { amount: "1200" } },
+    { input: { contract_text: "Acme Corp agrees to pay $5,000 net 30." }, expected_output: { amount: "5000" } },
+    { input: { contract_text: "Total due: $1,200 by 2026-07-01." }, expected_output: { amount: "1200" } },
   ],
   "extract the total from each invoice": [
-    { input: "INVOICE #4471 ... TOTAL $1,240.00 ...", expected: { total: "1240.00" } },
+    { input: { text: "INVOICE #4471 ... TOTAL $1,240.00 ..." }, expected_output: { total: "1240.00" } },
   ],
 };
 
@@ -445,8 +445,8 @@ const pa = Pareta.fromEnv();
 
 // one run per dataset: "auto" against the task's frontier baselines
 const runs = await Promise.all(
-  Object.entries(JOBS).map(([intent, items]) =>
-    pa.evals.runs.create({ intent, items, models: ["auto"], frontier: "benchmarked", wait: true }),
+  Object.entries(JOBS).map(([prompt, items]) =>
+    pa.evals.runs.create({ prompt, items, models: ["auto"], frontier: "benchmarked", wait: true }),
   ),
 );
 for (const run of runs) {
@@ -459,7 +459,7 @@ for (const run of runs) {
 
 Eval runs are metered against the org balance for the compute used (`"auto"` plus any frontier baselines), and raise `InsufficientCreditsError` on an empty balance. `run.cost` is a `Decimal` in dollars, floored to whole cents (so a sub-cent run reads `Decimal("0.00")`); `run.cost_micro_usd` is the raw integer micro-USD if you need the exact figure. See [Evals](evaluation.md) and [Billing](core-concepts.md).
 
-The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a contract to resolve against (a pinned `task=`, or the contract bound to the eval set — including the one the binder chose for an inline `items=… + intent=…` create):
+The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a task to resolve against (a pinned `task=`, or the eval set's own task — including the one Pareta worked out for an inline `items=… + prompt=…` create):
 
 **Python**
 
