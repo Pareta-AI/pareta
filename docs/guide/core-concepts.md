@@ -369,8 +369,10 @@ match = pa.tasks.match("extract key fields from contracts")
 task = match.chosen.task_id
 
 # 2. Evaluate "auto" against frontier baselines on YOUR rows.
-#    Pass task + items to create the eval set inline, or use an existing set id.
+#    Pass items + intent to create the eval set inline (task is optional —
+#    here we pin the contract we just matched), or use an existing set id.
 run = pa.evals.runs.create(
+    intent="extract the effective date from each contract",
     task=task,
     items=[
         {"input": "...your contract text...", "expected": {"effective_date": "2026-01-01"}},
@@ -409,8 +411,10 @@ const match = await pa.tasks.match("extract key fields from contracts");
 const task = match.chosen!.taskId;
 
 // 2. Evaluate "auto" against frontier baselines on YOUR rows.
-//    Pass task + items to create the eval set inline, or use an existing set id.
+//    Pass items + intent to create the eval set inline (task is optional —
+//    here we pin the contract we just matched), or use an existing set id.
 const run = await pa.evals.runs.create({
+  intent: "extract the effective date from each contract",
   task,
   items: [
     { input: "...your contract text...", expected: { effective_date: "2026-01-01" } },
@@ -440,8 +444,9 @@ console.log(m.requests_30d, m.success_rate_30d, m.savings_vs_frontier_micro_usd_
 
 A few notes on the eval call:
 
-- Provide **either** `eval_set=<id>` (an existing set) **or** `task=... +
-  items=...` to create one inline. With neither, `create()` raises `ValueError`.
+- Provide **either** `eval_set=<id>` (an existing set) **or** `items=... +
+  intent=...` to create one inline (`task=` is optional — pass it to pin a
+  specific contract). With neither, `create()` raises `ValueError`.
 - `frontier=` accepts `None`/`"none"` (no baselines), an explicit list of
   frontier ids, `"all"` (every frontier model for the task), or `"benchmarked"`
   (only the frontier models measured on this task, vision-filtered for

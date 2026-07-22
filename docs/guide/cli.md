@@ -78,20 +78,23 @@ There is one model id. Everything behind it — planning, routing, verification,
 
 ```bash
 # Build a set on the fly from a JSONL file and benchmark "auto" against the frontier baselines:
-pareta evals run --task contract-key-fields --file rows.jsonl \
+pareta evals run --intent "extract the key fields from each contract" --file rows.jsonl \
   --models auto --frontier --wait
 
 # Or run an existing eval set:
 pareta evals run --eval-set es_abc --models auto --wait
 
+# Preview the grading contract your rows will bind to (nothing is created):
+pareta evals propose --file rows.jsonl --intent "extract the key fields from each contract"
+
 # Manage eval sets (your data rows):
-pareta evals sets create --task contract-key-fields --file rows.jsonl
+pareta evals sets create --intent "extract the key fields from each contract" --file rows.jsonl
 pareta evals sets list
 pareta evals sets show es_abc
 pareta evals sets delete es_abc --yes
 ```
 
-`--models` is required — pass `auto` to benchmark Pareta's routing itself. `--frontier` adds the task's benchmarked vendor models as baselines, which is the comparison that matters. Each item in `--file` is one JSON object per line; eval runs are metered against your org balance.
+`--models` is required — pass `auto` to benchmark Pareta's routing itself. When you build a set from `--file`, `--intent` (one sentence on what the model should do with each item) is required — the binder resolves the grading contract from it and your data's shape, so `--task` is optional (pass it only to pin a specific contract). Running an existing set with `--eval-set` needs neither. `--frontier` adds the contract's benchmarked vendor models as baselines, which is the comparison that matters. Each item in `--file` is one JSON object per line; eval runs are metered against your org balance.
 
 ### `auto` — watch it and compare it
 
@@ -144,7 +147,7 @@ Because every command takes `--json` and exits non-zero on failure, the CLI comp
 export PARETA_API_KEY="pareta_sk_…"
 
 pareta --json tasks match "pull the key fields out of these contracts" | jq -r '.type'
-pareta evals run --task contract-key-fields --file rows.jsonl --models auto --frontier --wait
+pareta evals run --intent "extract the key fields from each contract" --file rows.jsonl --models auto --frontier --wait
 pareta chat "What is the contract's effective date? …"
 ```
 

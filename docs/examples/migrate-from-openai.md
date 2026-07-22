@@ -306,6 +306,7 @@ run = pa.evals.runs.create(
         {"input": "...", "expected": "..."},
         {"input": "...", "expected": "..."},
     ],
+    intent="extract the key fields from each contract",
     models=["auto"],          # the candidate you ship
     frontier="benchmarked",   # frontier models benchmarked on this task, as baselines
     wait=True,                # poll until terminal, then return
@@ -331,6 +332,7 @@ const run = await pa.evals.runs.create({
     { input: "...", expected: "..." },
     { input: "...", expected: "..." },
   ],
+  intent: "extract the key fields from each contract",
   models: ["auto"],          // the candidate you ship
   frontier: "benchmarked",   // frontier models benchmarked on this task, as baselines
   wait: true,                // poll until terminal, then return

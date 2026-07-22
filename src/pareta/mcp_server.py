@@ -5,7 +5,8 @@ Exposes Pareta as Model Context Protocol tools over stdio, auto-first:
 - inference: `chat` (model:"auto" — the routing brain — by default)
 - proof: `run_eval` / `get_eval_run` (benchmark "auto" against frontier
   models on the user's own data), `auto_metrics`, `compare_frontier`
-- grading contracts (for evals): `match_task`, `list_tasks`, `get_task`; models: `list_models`
+- grading contracts (for evals): `propose_contract` (bind your data + intent to a
+  contract), `match_task`, `list_tasks`, `get_task`; models: `list_models`
 - audio: `transcribe`, `speak`
 - retrieval: `rerank`, `embed`
 - images: `generate_image` (saves to disk — bytes never enter context)
@@ -138,11 +139,30 @@ def list_models() -> dict[str, Any]:
 # ── eval ───────────────────────────────────────────────────────────────────
 @mcp.tool()
 @_guard
+def propose_contract(items: list[dict[str, Any]], intent: str) -> dict[str, Any]:
+    """Which grading contract fits your data under your stated `intent`? Bind a
+    dataset (list of {"input":…, "expected_output":…} rows) + one sentence on
+    what the model should do with each item to a catalog grading contract.
+    Stateless — nothing is persisted. Returns ranked proposals + the auto-bind
+    decision (`bound_task`: the specific contract a task-less create would bind,
+    or null when the user must choose — e.g. the custom-eval floor). Feed
+    `bound_task` (or a chosen proposal's task_id) into `run_eval` as `task`, or
+    call `run_eval` with `intent` to auto-bind."""
+    result = _client().evals.propose_contract(items=items, intent=intent)
+    # to_dict() is the raw server payload; surface the SDK-computed decision
+    # the docstring promises (raw JSON has no bound_task/is_clean).
+    return {**result.to_dict(), "bound_task": result.bound_task,
+            "is_clean": result.is_clean}
+
+
+@mcp.tool()
+@_guard
 def run_eval(
     models: list[str],
     eval_set: str | None = None,
     task: str | None = None,
     items: list[dict[str, Any]] | None = None,
+    intent: str | None = None,
     frontier: list[str] | None = None,
     name: str | None = None,
     wait: bool = True,
@@ -150,12 +170,14 @@ def run_eval(
     """Run a bring-your-own-data eval comparing `models` (candidate model ids —
     include "auto") on a task, optionally against `frontier` vendor model ids.
 
-    Provide EITHER `eval_set` (an existing eval-set id) OR both `task` and
-    `items` (a list of row dicts) to create one inline. METERED: the run debits
-    your org balance for the compute. With `wait=True` (default) this blocks
-    until the run finishes and returns the results + billed cost; `wait=False`
-    returns immediately with the run id to poll via `get_eval_run`.
-    
+    Provide EITHER `eval_set` (an existing eval-set id) OR `items` (a list of
+    row dicts) + `intent` (one sentence on what the model should do with each
+    item — REQUIRED to build a set) to create one inline. The binder picks the
+    grading contract from your intent; pass `task` to pin one explicitly.
+    METERED: the run debits your org balance for the compute. With `wait=True`
+    (default) this blocks until the run finishes and returns the results +
+    billed cost; `wait=False` returns immediately with the run id to poll via
+    `get_eval_run`.
 
     TIP: include "auto" in the candidate models to benchmark Pareta's
     routing brain itself against frontier models on this data — the
@@ -165,6 +187,7 @@ def run_eval(
         eval_set=eval_set,
         task=task,
         items=items,
+        intent=intent,
         models=models,
         frontier=frontier,
         name=name,

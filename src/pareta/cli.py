@@ -224,17 +224,19 @@ app.add_typer(evals_app, name="evals")
 def evals_run(
     ctx: typer.Context,
     eval_set: Optional[str] = typer.Option(None, "--eval-set", help="Existing eval-set id to run."),
-    task: Optional[str] = typer.Option(None, "--task", help="Task id (with --file to build a set on the fly)."),
-    file: Optional[str] = typer.Option(None, "--file", help="JSONL of items, used with --task."),
+    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; the binder resolves --intent otherwise)."),
+    file: Optional[str] = typer.Option(None, "--file", help="JSONL of items, used to build a set on the fly."),
+    intent: Optional[str] = typer.Option(None, "--intent", help="One sentence: what the model should do with each item (required to build a set)."),
     models: list[str] = typer.Option([], "--models", help="Open model id(s) to evaluate (repeatable)."),
     frontier: bool = typer.Option(False, "--frontier", help="Also evaluate the benchmarked frontier roster."),
     name: Optional[str] = typer.Option(None, "--name", help="Name for an on-the-fly eval set."),
     wait: bool = typer.Option(False, "--wait", help="Block until the run finishes."),
 ) -> None:
     """Run an eval on your own data. Either point at an existing --eval-set, or
-    pass --task with a --file of JSONL items to build one on the fly. Include
-    "auto" in --models to benchmark the routing brain itself; --frontier adds
-    the task's benchmarked vendor models as baselines."""
+    pass --file of JSONL items + --intent (what the model should do with each
+    item) to build one on the fly — the binder picks the grading contract, or
+    pin one with --task. Include "auto" in --models to benchmark the routing
+    brain itself; --frontier adds the task's benchmarked vendor models."""
     state = _state(ctx)
     if not models:
         _err.print("[red]error:[/red] --models is required (e.g. --models auto)")
@@ -243,12 +245,12 @@ def evals_run(
     frontier_arg = "benchmarked" if frontier else None
     try:
         items = _read_jsonl(file) if file else None
-        if eval_set is None and not (task and items):
-            _err.print("[red]error:[/red] pass --eval-set <id>, or --task with --file")
+        if eval_set is None and not items:
+            _err.print("[red]error:[/red] pass --eval-set <id>, or --file (with --intent)")
             raise typer.Exit(code=2)
         run = _client().evals.runs.create(
-            eval_set=eval_set, task=task, items=items, models=list(models),
-            frontier=frontier_arg, name=name, wait=wait,
+            eval_set=eval_set, task=task, items=items, intent=intent,
+            models=list(models), frontier=frontier_arg, name=name, wait=wait,
         )
     except (ValueError, TypeError) as e:
         _err.print(f"[red]error:[/red] {e}")
@@ -280,6 +282,47 @@ def evals_run(
             _err.print(f"[red]run error:[/red] {run.error_detail}")
 
 
+@evals_app.command("propose")
+def evals_propose(
+    ctx: typer.Context,
+    file: str = typer.Option(..., "--file", help="JSONL of items to bind."),
+    intent: str = typer.Option(..., "--intent", help="One sentence: what the model should do with each item."),
+) -> None:
+    """Preview which grading contract fits your data under a stated intent.
+    Nothing is persisted — feed the chosen task id into `evals run --task`,
+    or let `evals run --file --intent` auto-bind a clean single match."""
+    state = _state(ctx)
+    try:
+        result = _client().evals.propose_contract(items=_read_jsonl(file), intent=intent)
+    except (ValueError, TypeError) as e:
+        _err.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=2)
+    except ParetaError as e:
+        raise _fail(e)
+    if state.json:
+        _emit(state, result)
+        return
+    if result.bound_task:
+        _out.print(f"bound:   [green]{result.bound_task}[/green] (auto-binds; `evals run --file … --intent …` uses it)")
+    else:
+        _out.print("[yellow]no clean bind[/yellow] — choose a contract below and pass it as --task")
+    if result.message:
+        _out.print(result.message)
+    if result.proposals:
+        table = Table(title="Proposals")
+        table.add_column("task", style="cyan")
+        table.add_column("confidence")
+        table.add_column("fit", justify="right")
+        table.add_column("why")
+        for p in result.proposals:
+            ev = p.evidence
+            table.add_row(
+                _dash(p.task_id), _dash(p.confidence),
+                f"{ev.get('validated_n', '—')}/{ev.get('total_n', '—')}",
+                (p.warning or ev.get("matcher_reason") or ""))
+        _out.print(table)
+
+
 def _read_jsonl(path: str) -> list[dict]:
     """Parse a JSONL file into a list of dicts (one object per non-blank line)."""
     from pathlib import Path
@@ -306,15 +349,18 @@ evals_app.add_typer(sets_app, name="sets")
 @sets_app.command("create")
 def sets_create(
     ctx: typer.Context,
-    task: str = typer.Option(..., "--task", help="Task id the rows belong to."),
     file: str = typer.Option(..., "--file", help="JSONL file of items (one object per line)."),
+    intent: str = typer.Option(..., "--intent", help="One sentence: what the model should do with each item."),
+    task: Optional[str] = typer.Option(None, "--task", help="Task id to pin (optional; the binder resolves --intent otherwise)."),
     name: Optional[str] = typer.Option(None, "--name", help="Optional eval-set name."),
 ) -> None:
-    """Create an eval set from a JSONL file of items."""
+    """Create an eval set from a JSONL file of items. `--intent` (what the model
+    should do with each item) is required; the binder resolves it to a grading
+    contract, or pin one with `--task`."""
     state = _state(ctx)
     try:
         items = _read_jsonl(file)
-        es = _client().evals.sets.create(task=task, items=items, name=name)
+        es = _client().evals.sets.create(items=items, intent=intent, task=task, name=name)
     except (ValueError, TypeError) as e:
         _err.print(f"[red]error:[/red] {e}")
         raise typer.Exit(code=2)

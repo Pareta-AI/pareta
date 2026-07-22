@@ -63,6 +63,7 @@ run = pa.evals.runs.create(
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
     ],
+    intent="extract the key dates from each contract",
     models=["auto"],                 # the contender
     frontier="benchmarked",          # baselines already benchmarked on this task
     wait=True,                       # block until the run is terminal
@@ -87,6 +88,7 @@ const run = await pa.evals.runs.create({
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
   ],
+  intent: "extract the key dates from each contract",
   models: ["auto"],               // the contender
   frontier: "benchmarked",        // baselines already benchmarked on this task
   wait: true,                     // block until the run is terminal

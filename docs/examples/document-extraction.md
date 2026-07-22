@@ -111,6 +111,7 @@ items = [
 eval_set = pa.evals.sets.create(
     task="invoice-extraction",
     items=items,
+    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
     name="Q1 vendor invoices (10 docs)",   # optional; auto-named if omitted
 )
 print(eval_set.id, eval_set.item_count, eval_set.scoring_strategy)
@@ -146,6 +147,7 @@ const items = [
 const evalSet = await pa.evals.sets.create({
   task: "invoice-extraction",
   items,
+  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
   name: "Q1 vendor invoices (10 docs)",   // optional; auto-named if omitted
 });
 console.log(evalSet.id, evalSet.itemCount, evalSet.scoringStrategy);
@@ -259,7 +261,7 @@ let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], fr
 run = await pa.evals.runs.wait(run.id, { pollInterval: 5, timeout: 1200 });
 ```
 
-If you would rather not pre-create the set, `runs.create` accepts `task=… + items=…` inline and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
+If you would rather not pre-create the set, `runs.create` accepts `items=… + intent=…` inline (`task=…` optional) and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
 
 ### What `frontier=` accepts
 
@@ -469,7 +471,9 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        es = await pa.evals.sets.create(task="invoice-extraction", items=items)
+        es = await pa.evals.sets.create(
+            task="invoice-extraction", items=items,
+            intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice")
         await pa.evals.sets.upload_document(es.id, "invoices/INV-4471.pdf", idx=0, field_name="document")
 
         run = await pa.evals.runs.create(
@@ -496,7 +500,10 @@ import { Pareta } from "pareta";
 async function main() {
   const pa = Pareta.fromEnv();
 
-  const es = await pa.evals.sets.create({ task: "invoice-extraction", items });
+  const es = await pa.evals.sets.create({
+    task: "invoice-extraction", items,
+    intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  });
   await pa.evals.sets.uploadDocument(es.id, "invoices/INV-4471.pdf", { idx: 0, fieldName: "document" });
 
   const run = await pa.evals.runs.create({
@@ -525,7 +532,10 @@ pa = Pareta.from_env()
 TASK = "invoice-extraction"
 
 # 1. eval set from your documents
-es = pa.evals.sets.create(task=TASK, items=items, name="vendor invoices")
+es = pa.evals.sets.create(
+    task=TASK, items=items,
+    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+    name="vendor invoices")
 for idx, path in enumerate(invoices):
     pa.evals.sets.upload_document(es.id, path, idx=idx, field_name="document")
 
@@ -557,7 +567,11 @@ const pa = Pareta.fromEnv();
 const TASK = "invoice-extraction";
 
 // 1. eval set from your documents
-const es = await pa.evals.sets.create({ task: TASK, items, name: "vendor invoices" });
+const es = await pa.evals.sets.create({
+  task: TASK, items,
+  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  name: "vendor invoices",
+});
 for (let idx = 0; idx < invoices.length; idx++) {
   await pa.evals.sets.uploadDocument(es.id, invoices[idx], { idx, fieldName: "document" });
 }

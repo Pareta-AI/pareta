@@ -1024,8 +1024,10 @@ match = pa.tasks.match("extract key fields from contracts")
 task = match.chosen.task_id
 
 # 2. Evaluate "auto" against frontier baselines on YOUR rows.
-#    Pass task + items to create the eval set inline, or use an existing set id.
+#    Pass items + intent to create the eval set inline (task is optional —
+#    here we pin the contract we just matched), or use an existing set id.
 run = pa.evals.runs.create(
+    intent="extract the effective date from each contract",
     task=task,
     items=[
         {"input": "...your contract text...", "expected": {"effective_date": "2026-01-01"}},
@@ -1064,8 +1066,10 @@ const match = await pa.tasks.match("extract key fields from contracts");
 const task = match.chosen!.taskId;
 
 // 2. Evaluate "auto" against frontier baselines on YOUR rows.
-//    Pass task + items to create the eval set inline, or use an existing set id.
+//    Pass items + intent to create the eval set inline (task is optional —
+//    here we pin the contract we just matched), or use an existing set id.
 const run = await pa.evals.runs.create({
+  intent: "extract the effective date from each contract",
   task,
   items: [
     { input: "...your contract text...", expected: { effective_date: "2026-01-01" } },
@@ -1095,8 +1099,9 @@ console.log(m.requests_30d, m.success_rate_30d, m.savings_vs_frontier_micro_usd_
 
 A few notes on the eval call:
 
-- Provide **either** `eval_set=<id>` (an existing set) **or** `task=... +
-  items=...` to create one inline. With neither, `create()` raises `ValueError`.
+- Provide **either** `eval_set=<id>` (an existing set) **or** `items=... +
+  intent=...` to create one inline (`task=` is optional — pass it to pin a
+  specific contract). With neither, `create()` raises `ValueError`.
 - `frontier=` accepts `None`/`"none"` (no baselines), an explicit list of
   frontier ids, `"all"` (every frontier model for the task), or `"benchmarked"`
   (only the frontier models measured on this task, vision-filtered for
@@ -1556,11 +1561,13 @@ Streaming, `temperature`, `max_tokens`, and the rest work exactly as they do aga
 
 Benchmarks tell you which model wins on someone else's data. This page is about the only number that matters: how `model="auto"` scores on *your* rows.
 
-You give Pareta a list of items for a task, name the frontier baselines you want beaten, and get back per-contender quality with confidence intervals and cost. The platform scores everything with the task's scorer, runs `"auto"` and the frontier baselines on the same items, and meters the compute against your org balance. No GPUs to size, no scorer to wire up, no judge to host.
+Upload your data, say what the model should do with each item, and Pareta identifies the **grading contract** — how your data will be scored — and shows it to you before anything runs. Then it runs `"auto"` and the frontier baselines you name on the same items and returns per-contender quality with confidence intervals and cost. No GPUs to size, no scorer to wire up, no judge to host.
+
+An eval set is **data + intent**: the same rows can mean different jobs, and only you know which, so `intent` — one sentence on what the model should do with each item — is **required**. From your intent and the data's shape, the binder resolves the grading contract; you never have to know the contract's name.
 
 The shape is always the same:
 
-1. Turn your rows into an **eval set** (`evals.sets.create`), or pass them inline.
+1. State your **intent** + upload your rows → the binder picks the **grading contract** (preview it with `evals.propose_contract`), or turn them into an **eval set** directly with `evals.sets.create`.
 2. Kick off an **eval run** with `"auto"` as the candidate and frontier baselines to beat (`evals.runs.create`), optionally waiting for it to finish.
 3. Read `run.results` to compare quality and cost; read `run.cost` for the bill.
 
@@ -1596,7 +1603,7 @@ from pareta import Pareta
 pa = Pareta.from_env()  # reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 
 run = pa.evals.runs.create(
-    task="contract-key-fields",
+    intent="extract the effective and termination dates from each contract",
     items=[
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
@@ -1624,7 +1631,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv(); // reads PARETA_API_KEY (and optional PARETA_BASE_URL)
 
 const run = await pa.evals.runs.create({
-  task: "contract-key-fields",
+  intent: "extract the effective and termination dates from each contract",
   items: [
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
@@ -1653,13 +1660,13 @@ That single call created the eval set inline, started the run, polled it to comp
 
 ## Step 1: build an eval set
 
-An eval set is your rows bound to a task. Create one explicitly when you want to reuse it across several runs.
+An eval set is your rows + your intent, bound to a grading contract. Create one explicitly when you want to reuse it across several runs. Pass `intent` (required) — the binder resolves the grading contract from it and your data's shape, and auto-binds a clean single match:
 
 **Python**
 
 ```python
 eval_set = pa.evals.sets.create(
-    task="contract-key-fields",
+    intent="extract the effective and termination dates from each contract",
     items=[
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
@@ -1668,16 +1675,17 @@ eval_set = pa.evals.sets.create(
 )
 
 print(eval_set.id)               # pass this to runs.create(eval_set=...)
-print(eval_set.task_id)          # "contract-key-fields"
+print(eval_set.task_id)          # the contract the binder chose, e.g. "contract-key-fields"
+print(eval_set.intent)           # your intent, stored on the set
 print(eval_set.item_count)       # 2
-print(eval_set.scoring_strategy) # e.g. "extraction" — how this task is scored
+print(eval_set.scoring_strategy) # e.g. "contract" — how this contract scores
 ```
 
 **TypeScript**
 
 ```typescript
 const evalSet = await pa.evals.sets.create({
-  task: "contract-key-fields",
+  intent: "extract the effective and termination dates from each contract",
   items: [
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
@@ -1686,12 +1694,43 @@ const evalSet = await pa.evals.sets.create({
 });
 
 console.log(evalSet.id);              // pass this to runs.create({ evalSet: ... })
-console.log(evalSet.taskId);          // "contract-key-fields"
+console.log(evalSet.taskId);          // the contract the binder chose, e.g. "contract-key-fields"
+console.log(evalSet.intent);          // your intent, stored on the set
 console.log(evalSet.itemCount);       // 2
-console.log(evalSet.scoringStrategy); // e.g. "extraction" — how this task is scored
+console.log(evalSet.scoringStrategy); // e.g. "contract" — how this contract scores
 ```
 
-`items` is required and must be non-empty (the SDK raises `ValueError` otherwise). Each item is a row in the task's input schema; the rows go up as JSONL on the wire. The exact field names (`input`, `expected`, and any others) follow the task you chose. To inspect a task's schema and pull sample items before you format yours, use `tasks.retrieve(task_id, examples_n=...)` — see the [tasks reference](../reference/tasks.md).
+`intent` and `items` are both required (the SDK raises if either is missing or empty). `task` is optional — omit it and the binder picks the contract; pass `task="..."` to pin one explicitly. When the binder can't safely choose (your intent and the data disagree, the set looks mixed, or nothing specific fits), `create` raises with the proposals so you decide — it never binds the wrong contract silently.
+
+### Preview the binding first: `propose_contract`
+
+To see which contract Pareta will use — and exactly how it scores — before persisting anything, call `propose_contract`. It's stateless (nothing is created):
+
+**Python**
+
+```python
+proposal = pa.evals.propose_contract(
+    intent="extract the effective and termination dates from each contract",
+    items=[{"input": "...", "expected": {"effective_date": "2026-01-01"}}],
+)
+print(proposal.bound_task)   # the contract a task-less create would bind, or None if you must choose
+for p in proposal.proposals:
+    print(p.task_id, p.confidence, p.evidence.get("validated_n"), "/", p.evidence.get("total_n"))
+```
+
+**TypeScript**
+
+```typescript
+const proposal = await pa.evals.proposeContract({
+  intent: "extract the effective and termination dates from each contract",
+  items: [{ input: "...", expected: { effective_date: "2026-01-01" } }],
+});
+console.log(proposal.boundTask); // the contract a task-less create would bind, or null if you must choose
+```
+
+When no specific contract fits your data, the binder offers the **custom-eval** universal floor — graded by a judge panel on your stated intent (win rate vs the frontier anchor), so no dataset dead-ends. It's a floor you opt into (`task="custom-eval"`), never an auto-bind; a matched contract grades more precisely.
+
+Each item is a row in the contract's input schema; the rows go up as JSONL on the wire. To inspect a contract's schema and pull sample items, use `tasks.retrieve(task_id, examples_n=...)` — see the [tasks reference](../reference/tasks.md).
 
 Manage sets like any other resource:
 
@@ -1719,6 +1758,7 @@ Some tasks score over documents (PDFs, scanned invoices, images) rather than pla
 
 ```python
 eval_set = pa.evals.sets.create(
+    intent="extract the total and vendor from each invoice",
     task="invoice-extraction",
     items=[
         {"expected": {"total": "1240.00", "vendor": "Katana ML"}},   # the doc is attached next
@@ -1741,6 +1781,7 @@ pa.evals.sets.upload_document(eval_set.id, "invoices/acme-0002.pdf", idx=1, fiel
 
 ```typescript
 const evalSet = await pa.evals.sets.create({
+  intent: "extract the total and vendor from each invoice",
   task: "invoice-extraction",
   items: [
     { expected: { total: "1240.00", vendor: "Katana ML" } }, // the doc is attached next
@@ -1793,7 +1834,7 @@ run = pa.evals.runs.create(eval_set=eval_set.id, models=["auto"], frontier="benc
 
 # Inline: create the set and run it in one shot
 run = pa.evals.runs.create(
-    task="contract-key-fields",
+    intent="extract the key fields from each contract",
     items=[{"input": "...", "expected": {...}}],
     models=["auto"],
     frontier="benchmarked",
@@ -1809,7 +1850,7 @@ let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], fr
 
 // Inline: create the set and run it in one shot
 run = await pa.evals.runs.create({
-  task: "contract-key-fields",
+  intent: "extract the key fields from each contract",
   items: [{ input: "...", expected: {} }],
   models: ["auto"],
   frontier: "benchmarked",
@@ -1817,7 +1858,7 @@ run = await pa.evals.runs.create({
 });
 ```
 
-You must pass **either** `eval_set=<id>` **or** `task=… + items=…`; the SDK raises `ValueError` if you give neither. `models` is required — pass `["auto"]`; `frontier=` names the baselines it is measured against. Each run is **metered**: the org balance is debited for the compute across auto and the frontier baselines. If the balance is empty, `create` raises `InsufficientCreditsError` (402). Top-up is browser-only — the SDK never exposes balance or payment methods. See [Errors and metering](errors-and-retries.md).
+You must pass **either** `eval_set=<id>` **or** `items=… + intent=…` (with `task=` optional); the SDK raises `ValueError` if you give neither. `models` is required — pass `["auto"]`; `frontier=` names the baselines it is measured against. Each run is **metered**: the org balance is debited for the compute across auto and the frontier baselines. If the balance is empty, `create` raises `InsufficientCreditsError` (402). Top-up is browser-only — the SDK never exposes balance or payment methods. See [Errors and metering](errors-and-retries.md).
 
 ### Choosing frontier baselines
 
@@ -1856,7 +1897,7 @@ run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], fronti
 run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], frontier: ["gpt-5.5"], wait: true });
 ```
 
-The `"all"` and `"benchmarked"` keywords need to know the task. When you create inline (`task=…`) the SDK already has it; when you pass `eval_set=…` it looks the task up from the set. If it still can't resolve a task it raises `ValueError`, and an unrecognized keyword (anything other than `"all"`/`"benchmarked"`/`"none"`) raises `ValueError` too.
+The `"all"` and `"benchmarked"` keywords need to know the contract. When you pin one (`task=…`) the SDK already has it; otherwise it reads the bound contract off the set — the one you passed as `eval_set=…`, or the one the binder just chose for an inline `items=… + intent=…` create. If it still can't resolve a contract it raises `ValueError`, and an unrecognized keyword (anything other than `"all"`/`"benchmarked"`/`"none"`) raises `ValueError` too.
 
 To see and pin the roster yourself, list it first:
 
@@ -2018,7 +2059,7 @@ from pareta import AsyncPareta
 async def main():
     async with AsyncPareta.from_env() as pa:
         run = await pa.evals.runs.create(
-            task="contract-key-fields",
+            intent="extract the key fields from each contract",
             items=[{"input": "...", "expected": {...}}],
             models=["auto"],
             frontier="benchmarked",
@@ -2041,7 +2082,7 @@ import { Pareta } from "pareta";
 const pa = Pareta.fromEnv();
 
 const run = await pa.evals.runs.create({
-  task: "contract-key-fields",
+  intent: "extract the key fields from each contract",
   items: [{ input: "...", expected: {} }],
   models: ["auto"],
   frontier: "benchmarked",
@@ -2451,11 +2492,12 @@ they are programming errors, not server responses:
 - [`chat.completions.create()`](./inference.md) raises `ValueError` if `model`
   or `messages` is empty.
 - [`tasks.match()`](../reference/tasks.md) raises `ValueError` if `query` is empty.
-- [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` is empty.
+- [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` or
+  `intent` is empty.
 - [`evals.runs.create()`](evaluation.md) raises `ValueError` if neither
-  `eval_set=` nor `task=`+`items=` is supplied, and `ValueError`/`TypeError` if
-  `frontier=` is an unparseable keyword or a frontier keyword can't be resolved
-  to a task.
+  `eval_set=` nor `items=` (with `intent=`) is supplied, and
+  `ValueError`/`TypeError` if `frontier=` is an unparseable keyword or a
+  frontier keyword can't be resolved to a task.
 - [`evals.sets.upload_document()`](evaluation.md) raises `TypeError` if `file` is
   not a path, bytes, or a binary file-like object.
 
@@ -2626,7 +2668,7 @@ from pareta import Pareta, ParetaError
 with Pareta.from_env() as pa:
     try:
         run = pa.evals.runs.create(
-            task="contract-key-fields",
+            intent="extract the key fields from each contract",
             items=[{"input": "...", "expected": "..."}],
             models=["auto"],
             frontier="benchmarked",
@@ -2647,7 +2689,7 @@ import { Pareta, ParetaError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   const run = await pa.evals.runs.create({
-    task: "contract-key-fields",
+    intent: "extract the key fields from each contract",
     items: [{ input: "...", expected: "..." }],
     models: ["auto"],
     frontier: "benchmarked",
@@ -3197,7 +3239,7 @@ console.log("requests (30d):", metrics.requests_30d);
 
 ### Run several eval runs in parallel
 
-`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `task=` + `items=` creates the eval set and the run in one call.
+`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `intent=` + `items=` creates the eval set and the run in one call.
 
 **Python**
 
@@ -3206,11 +3248,11 @@ import asyncio
 from pareta import AsyncPareta
 
 JOBS = {
-    "contract-key-fields": [
+    "extract the payment amount from each contract": [
         {"input": "Acme Corp agrees to pay $5,000 net 30.", "expected": {"amount": "5000"}},
         {"input": "Total due: $1,200 by 2026-07-01.", "expected": {"amount": "1200"}},
     ],
-    "invoice-extraction": [
+    "extract the total from each invoice": [
         {"input": "INVOICE #4471 ... TOTAL $1,240.00 ...", "expected": {"total": "1240.00"}},
     ],
 }
@@ -3218,14 +3260,14 @@ JOBS = {
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        # one run per dataset: "auto" against that task's frontier baselines
+        # one run per dataset: "auto" against the task's frontier baselines
         runs = await asyncio.gather(
             *(
                 pa.evals.runs.create(
-                    task=task, items=items,
+                    intent=intent, items=items,
                     models=["auto"], frontier="benchmarked", wait=True,
                 )
-                for task, items in JOBS.items()
+                for intent, items in JOBS.items()
             )
         )
         for run in runs:
@@ -3245,21 +3287,21 @@ asyncio.run(main())
 import { Pareta } from "pareta";
 
 const JOBS: Record<string, Array<Record<string, unknown>>> = {
-  "contract-key-fields": [
+  "extract the payment amount from each contract": [
     { input: "Acme Corp agrees to pay $5,000 net 30.", expected: { amount: "5000" } },
     { input: "Total due: $1,200 by 2026-07-01.", expected: { amount: "1200" } },
   ],
-  "invoice-extraction": [
+  "extract the total from each invoice": [
     { input: "INVOICE #4471 ... TOTAL $1,240.00 ...", expected: { total: "1240.00" } },
   ],
 };
 
 const pa = Pareta.fromEnv();
 
-// one run per dataset: "auto" against that task's frontier baselines
+// one run per dataset: "auto" against the task's frontier baselines
 const runs = await Promise.all(
-  Object.entries(JOBS).map(([task, items]) =>
-    pa.evals.runs.create({ task, items, models: ["auto"], frontier: "benchmarked", wait: true }),
+  Object.entries(JOBS).map(([intent, items]) =>
+    pa.evals.runs.create({ intent, items, models: ["auto"], frontier: "benchmarked", wait: true }),
   ),
 );
 for (const run of runs) {
@@ -3272,7 +3314,7 @@ for (const run of runs) {
 
 Eval runs are metered against the org balance for the compute used (`"auto"` plus any frontier baselines), and raise `InsufficientCreditsError` on an empty balance. `run.cost` is a `Decimal` in dollars, floored to whole cents (so a sub-cent run reads `Decimal("0.00")`); `run.cost_micro_usd` is the raw integer micro-USD if you need the exact figure. See [Evals](evaluation.md) and [Billing](core-concepts.md).
 
-The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a task to resolve against (taken from `task=` or looked up from the eval set):
+The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a contract to resolve against (a pinned `task=`, or the contract bound to the eval set — including the one the binder chose for an inline `items=… + intent=…` create):
 
 **Python**
 
@@ -4167,20 +4209,23 @@ There is one model id. Everything behind it — planning, routing, verification,
 
 ```bash
 # Build a set on the fly from a JSONL file and benchmark "auto" against the frontier baselines:
-pareta evals run --task contract-key-fields --file rows.jsonl \
+pareta evals run --intent "extract the key fields from each contract" --file rows.jsonl \
   --models auto --frontier --wait
 
 # Or run an existing eval set:
 pareta evals run --eval-set es_abc --models auto --wait
 
+# Preview the grading contract your rows will bind to (nothing is created):
+pareta evals propose --file rows.jsonl --intent "extract the key fields from each contract"
+
 # Manage eval sets (your data rows):
-pareta evals sets create --task contract-key-fields --file rows.jsonl
+pareta evals sets create --intent "extract the key fields from each contract" --file rows.jsonl
 pareta evals sets list
 pareta evals sets show es_abc
 pareta evals sets delete es_abc --yes
 ```
 
-`--models` is required — pass `auto` to benchmark Pareta's routing itself. `--frontier` adds the task's benchmarked vendor models as baselines, which is the comparison that matters. Each item in `--file` is one JSON object per line; eval runs are metered against your org balance.
+`--models` is required — pass `auto` to benchmark Pareta's routing itself. When you build a set from `--file`, `--intent` (one sentence on what the model should do with each item) is required — the binder resolves the grading contract from it and your data's shape, so `--task` is optional (pass it only to pin a specific contract). Running an existing set with `--eval-set` needs neither. `--frontier` adds the contract's benchmarked vendor models as baselines, which is the comparison that matters. Each item in `--file` is one JSON object per line; eval runs are metered against your org balance.
 
 ### `auto` — watch it and compare it
 
@@ -4233,7 +4278,7 @@ Because every command takes `--json` and exits non-zero on failure, the CLI comp
 export PARETA_API_KEY="pareta_sk_…"
 
 pareta --json tasks match "pull the key fields out of these contracts" | jq -r '.type'
-pareta evals run --task contract-key-fields --file rows.jsonl --models auto --frontier --wait
+pareta evals run --intent "extract the key fields from each contract" --file rows.jsonl --models auto --frontier --wait
 pareta chat "What is the contract's effective date? …"
 ```
 
@@ -5791,7 +5836,11 @@ items = [
     # ... more rows. A few dozen labeled rows already give you a usable signal.
 ]
 
-eval_set = pa.evals.sets.create(task=task_id, items=items)
+eval_set = pa.evals.sets.create(
+    task=task_id,
+    items=items,
+    intent="extract the effective date and parties from each contract",
+)
 
 print(eval_set.id)                # use this in runs.create(eval_set=...)
 print(eval_set.item_count)        # 2
@@ -5813,7 +5862,11 @@ const items = [
   // ... more rows. A few dozen labeled rows already give you a usable signal.
 ];
 
-const evalSet = await pa.evals.sets.create({ task: taskId, items });
+const evalSet = await pa.evals.sets.create({
+  task: taskId,
+  items,
+  intent: "extract the effective date and parties from each contract",
+});
 
 console.log(evalSet.id);              // use this in runs.create({ evalSet: ... })
 console.log(evalSet.itemCount);       // 2
@@ -5858,6 +5911,7 @@ eval_set = pa.evals.sets.create(
         {"target": {"invoice_number": "INV-7781", "total": "1240.00"}},
         {"target": {"invoice_number": "INV-7782", "total": "98.50"}},
     ],
+    intent="extract the invoice number and total from each invoice",
 )
 
 # Attach one PDF per row. idx is the 0-based row; field_name is the blob input
@@ -5877,6 +5931,7 @@ const evalSet = await pa.evals.sets.create({
     { target: { invoice_number: "INV-7781", total: "1240.00" } },
     { target: { invoice_number: "INV-7782", total: "98.50" } },
   ],
+  intent: "extract the invoice number and total from each invoice",
 });
 
 // Attach one PDF per row. idx is the 0-based row; fieldName is the blob input
@@ -5932,7 +5987,7 @@ GPUs and serving hardware never enter this call. There is no GPU, quantization, 
 
 ### Inline create (skip step 2)
 
-If you do not need a reusable set, hand the rows straight to the run. Pass `task=` and `items=` instead of `eval_set=`, and the SDK creates the set for you:
+If you do not need a reusable set, hand the rows straight to the run. Pass `items=` and `intent=` instead of `eval_set=`, and the SDK creates the set for you:
 
 **Python**
 
@@ -5940,6 +5995,7 @@ If you do not need a reusable set, hand the rows straight to the run. Pass `task
 run = pa.evals.runs.create(
     task=task_id,
     items=items,
+    intent="extract the effective date and parties from each contract",
     models=["auto"],
     frontier="benchmarked",
     wait=True,
@@ -5952,13 +6008,14 @@ run = pa.evals.runs.create(
 const run = await pa.evals.runs.create({
   task: taskId,
   items,
+  intent: "extract the effective date and parties from each contract",
   models: ["auto"],
   frontier: "benchmarked",
   wait: true,
 });
 ```
 
-You must pass either `eval_set=<id>` or both `task=` and `items=`; anything else raises `ValueError`.
+You must pass either `eval_set=<id>` or `items=` plus `intent=` (`task=` is optional); anything else raises `ValueError`.
 
 ### Pinning the frontier roster
 
@@ -6174,7 +6231,10 @@ items = [
     {"text": "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
      "target": {"effective_date": "2026-01-12", "parties": ["Initech", "Hooli"]}},
 ]
-eval_set = pa.evals.sets.create(task=task_id, items=items, name="contract fields v1")
+eval_set = pa.evals.sets.create(
+    task=task_id, items=items,
+    intent="extract the effective date and parties from each contract",
+    name="contract fields v1")
 
 # 3. Run auto against the benchmarked frontier baselines.
 try:
@@ -6213,7 +6273,11 @@ const items = [
   { text: "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
     target: { effective_date: "2026-01-12", parties: ["Initech", "Hooli"] } },
 ];
-const evalSet = await pa.evals.sets.create({ task: taskId, items, name: "contract fields v1" });
+const evalSet = await pa.evals.sets.create({
+  task: taskId, items,
+  intent: "extract the effective date and parties from each contract",
+  name: "contract fields v1",
+});
 
 // 3. Run auto against the benchmarked frontier baselines.
 let run;
@@ -6251,7 +6315,9 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        eval_set = await pa.evals.sets.create(task="contract-key-fields", items=items)
+        eval_set = await pa.evals.sets.create(
+            task="contract-key-fields", items=items,
+            intent="extract the effective date and parties from each contract")
         run = await pa.evals.runs.create(
             eval_set=eval_set.id,
             models=["auto"],
@@ -6276,7 +6342,10 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 
-const evalSet = await pa.evals.sets.create({ task: "contract-key-fields", items });
+const evalSet = await pa.evals.sets.create({
+  task: "contract-key-fields", items,
+  intent: "extract the effective date and parties from each contract",
+});
 const run = await pa.evals.runs.create({
   evalSet: evalSet.id,
   models: ["auto"],
@@ -6414,6 +6483,7 @@ items = [
 eval_set = pa.evals.sets.create(
     task="invoice-extraction",
     items=items,
+    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
     name="Q1 vendor invoices (10 docs)",   # optional; auto-named if omitted
 )
 print(eval_set.id, eval_set.item_count, eval_set.scoring_strategy)
@@ -6449,6 +6519,7 @@ const items = [
 const evalSet = await pa.evals.sets.create({
   task: "invoice-extraction",
   items,
+  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
   name: "Q1 vendor invoices (10 docs)",   // optional; auto-named if omitted
 });
 console.log(evalSet.id, evalSet.itemCount, evalSet.scoringStrategy);
@@ -6562,7 +6633,7 @@ let run = await pa.evals.runs.create({ evalSet: evalSet.id, models: ["auto"], fr
 run = await pa.evals.runs.wait(run.id, { pollInterval: 5, timeout: 1200 });
 ```
 
-If you would rather not pre-create the set, `runs.create` accepts `task=… + items=…` inline and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
+If you would rather not pre-create the set, `runs.create` accepts `items=… + intent=…` inline (`task=…` optional) and creates the set for you. You still attach blobs first, so for document tasks the explicit `sets.create` + `upload_document` path above is the one to use.
 
 ### What `frontier=` accepts
 
@@ -6772,7 +6843,9 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        es = await pa.evals.sets.create(task="invoice-extraction", items=items)
+        es = await pa.evals.sets.create(
+            task="invoice-extraction", items=items,
+            intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice")
         await pa.evals.sets.upload_document(es.id, "invoices/INV-4471.pdf", idx=0, field_name="document")
 
         run = await pa.evals.runs.create(
@@ -6799,7 +6872,10 @@ import { Pareta } from "pareta";
 async function main() {
   const pa = Pareta.fromEnv();
 
-  const es = await pa.evals.sets.create({ task: "invoice-extraction", items });
+  const es = await pa.evals.sets.create({
+    task: "invoice-extraction", items,
+    intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  });
   await pa.evals.sets.uploadDocument(es.id, "invoices/INV-4471.pdf", { idx: 0, fieldName: "document" });
 
   const run = await pa.evals.runs.create({
@@ -6828,7 +6904,10 @@ pa = Pareta.from_env()
 TASK = "invoice-extraction"
 
 # 1. eval set from your documents
-es = pa.evals.sets.create(task=TASK, items=items, name="vendor invoices")
+es = pa.evals.sets.create(
+    task=TASK, items=items,
+    intent="extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+    name="vendor invoices")
 for idx, path in enumerate(invoices):
     pa.evals.sets.upload_document(es.id, path, idx=idx, field_name="document")
 
@@ -6860,7 +6939,11 @@ const pa = Pareta.fromEnv();
 const TASK = "invoice-extraction";
 
 // 1. eval set from your documents
-const es = await pa.evals.sets.create({ task: TASK, items, name: "vendor invoices" });
+const es = await pa.evals.sets.create({
+  task: TASK, items,
+  intent: "extract invoice_number, invoice_date, total, currency, and vendor from each invoice",
+  name: "vendor invoices",
+});
 for (let idx = 0; idx < invoices.length; idx++) {
   await pa.evals.sets.uploadDocument(es.id, invoices[idx], { idx, fieldName: "document" });
 }
@@ -7929,6 +8012,7 @@ run = pa.evals.runs.create(
         {"input": "Effective as of January 1, 2026, ...", "expected": {"effective_date": "2026-01-01"}},
         {"input": "This Agreement terminates on 2027-12-31 ...", "expected": {"termination_date": "2027-12-31"}},
     ],
+    intent="extract the key dates from each contract",
     models=["auto"],                 # the contender
     frontier="benchmarked",          # baselines already benchmarked on this task
     wait=True,                       # block until the run is terminal
@@ -7953,6 +8037,7 @@ const run = await pa.evals.runs.create({
     { input: "Effective as of January 1, 2026, ...", expected: { effective_date: "2026-01-01" } },
     { input: "This Agreement terminates on 2027-12-31 ...", expected: { termination_date: "2027-12-31" } },
   ],
+  intent: "extract the key dates from each contract",
   models: ["auto"],               // the contender
   frontier: "benchmarked",        // baselines already benchmarked on this task
   wait: true,                     // block until the run is terminal
@@ -8507,6 +8592,7 @@ run = pa.evals.runs.create(
         {"input": "...", "expected": "..."},
         {"input": "...", "expected": "..."},
     ],
+    intent="extract the key fields from each contract",
     models=["auto"],          # the candidate you ship
     frontier="benchmarked",   # frontier models benchmarked on this task, as baselines
     wait=True,                # poll until terminal, then return
@@ -8532,6 +8618,7 @@ const run = await pa.evals.runs.create({
     { input: "...", expected: "..." },
     { input: "...", expected: "..." },
   ],
+  intent: "extract the key fields from each contract",
   models: ["auto"],          // the candidate you ship
   frontier: "benchmarked",   // frontier models benchmarked on this task, as baselines
   wait: true,                // poll until terminal, then return

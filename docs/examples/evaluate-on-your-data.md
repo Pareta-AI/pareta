@@ -109,7 +109,11 @@ items = [
     # ... more rows. A few dozen labeled rows already give you a usable signal.
 ]
 
-eval_set = pa.evals.sets.create(task=task_id, items=items)
+eval_set = pa.evals.sets.create(
+    task=task_id,
+    items=items,
+    intent="extract the effective date and parties from each contract",
+)
 
 print(eval_set.id)                # use this in runs.create(eval_set=...)
 print(eval_set.item_count)        # 2
@@ -131,7 +135,11 @@ const items = [
   // ... more rows. A few dozen labeled rows already give you a usable signal.
 ];
 
-const evalSet = await pa.evals.sets.create({ task: taskId, items });
+const evalSet = await pa.evals.sets.create({
+  task: taskId,
+  items,
+  intent: "extract the effective date and parties from each contract",
+});
 
 console.log(evalSet.id);              // use this in runs.create({ evalSet: ... })
 console.log(evalSet.itemCount);       // 2
@@ -176,6 +184,7 @@ eval_set = pa.evals.sets.create(
         {"target": {"invoice_number": "INV-7781", "total": "1240.00"}},
         {"target": {"invoice_number": "INV-7782", "total": "98.50"}},
     ],
+    intent="extract the invoice number and total from each invoice",
 )
 
 # Attach one PDF per row. idx is the 0-based row; field_name is the blob input
@@ -195,6 +204,7 @@ const evalSet = await pa.evals.sets.create({
     { target: { invoice_number: "INV-7781", total: "1240.00" } },
     { target: { invoice_number: "INV-7782", total: "98.50" } },
   ],
+  intent: "extract the invoice number and total from each invoice",
 });
 
 // Attach one PDF per row. idx is the 0-based row; fieldName is the blob input
@@ -250,7 +260,7 @@ GPUs and serving hardware never enter this call. There is no GPU, quantization, 
 
 ### Inline create (skip step 2)
 
-If you do not need a reusable set, hand the rows straight to the run. Pass `task=` and `items=` instead of `eval_set=`, and the SDK creates the set for you:
+If you do not need a reusable set, hand the rows straight to the run. Pass `items=` and `intent=` instead of `eval_set=`, and the SDK creates the set for you:
 
 **Python**
 
@@ -258,6 +268,7 @@ If you do not need a reusable set, hand the rows straight to the run. Pass `task
 run = pa.evals.runs.create(
     task=task_id,
     items=items,
+    intent="extract the effective date and parties from each contract",
     models=["auto"],
     frontier="benchmarked",
     wait=True,
@@ -270,13 +281,14 @@ run = pa.evals.runs.create(
 const run = await pa.evals.runs.create({
   task: taskId,
   items,
+  intent: "extract the effective date and parties from each contract",
   models: ["auto"],
   frontier: "benchmarked",
   wait: true,
 });
 ```
 
-You must pass either `eval_set=<id>` or both `task=` and `items=`; anything else raises `ValueError`.
+You must pass either `eval_set=<id>` or `items=` plus `intent=` (`task=` is optional); anything else raises `ValueError`.
 
 ### Pinning the frontier roster
 
@@ -492,7 +504,10 @@ items = [
     {"text": "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
      "target": {"effective_date": "2026-01-12", "parties": ["Initech", "Hooli"]}},
 ]
-eval_set = pa.evals.sets.create(task=task_id, items=items, name="contract fields v1")
+eval_set = pa.evals.sets.create(
+    task=task_id, items=items,
+    intent="extract the effective date and parties from each contract",
+    name="contract fields v1")
 
 # 3. Run auto against the benchmarked frontier baselines.
 try:
@@ -531,7 +546,11 @@ const items = [
   { text: "Master Services Agreement, dated January 12, 2026, by and between Initech and Hooli...",
     target: { effective_date: "2026-01-12", parties: ["Initech", "Hooli"] } },
 ];
-const evalSet = await pa.evals.sets.create({ task: taskId, items, name: "contract fields v1" });
+const evalSet = await pa.evals.sets.create({
+  task: taskId, items,
+  intent: "extract the effective date and parties from each contract",
+  name: "contract fields v1",
+});
 
 // 3. Run auto against the benchmarked frontier baselines.
 let run;
@@ -569,7 +588,9 @@ from pareta import AsyncPareta
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        eval_set = await pa.evals.sets.create(task="contract-key-fields", items=items)
+        eval_set = await pa.evals.sets.create(
+            task="contract-key-fields", items=items,
+            intent="extract the effective date and parties from each contract")
         run = await pa.evals.runs.create(
             eval_set=eval_set.id,
             models=["auto"],
@@ -594,7 +615,10 @@ import { Pareta } from "pareta";
 
 const pa = Pareta.fromEnv();
 
-const evalSet = await pa.evals.sets.create({ task: "contract-key-fields", items });
+const evalSet = await pa.evals.sets.create({
+  task: "contract-key-fields", items,
+  intent: "extract the effective date and parties from each contract",
+});
 const run = await pa.evals.runs.create({
   evalSet: evalSet.id,
   models: ["auto"],

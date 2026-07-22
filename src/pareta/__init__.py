@@ -53,6 +53,8 @@ from ._models import (
     EvalRun,
     EvalResult,
     EvalItemResult,
+    ContractProposal,
+    ProposalResult,
     FrontierModel,
 )
 
@@ -95,5 +97,7 @@ __all__ = [
     "EvalRun",
     "EvalResult",
     "EvalItemResult",
+    "ContractProposal",
+    "ProposalResult",
     "FrontierModel",
 ]

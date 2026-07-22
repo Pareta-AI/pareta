@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.0.0 — 2026-07-21
+
+**Breaking (CB1): an eval set is now DATA + INTENT.** The same rows can mean
+different tasks, so `intent` — one sentence on what the model should do with
+each item — is REQUIRED, and `task` is now OPTIONAL:
+
+- `evals.propose_contract(items=…, intent=…)` — NEW. Preview which grading
+  contract fits your data under your stated intent (stateless; nothing
+  persisted). Returns a `ProposalResult` (ranked proposals, the auto-bind
+  decision, conflict/split reporting).
+- `evals.sets.create(items=…, intent=…, task=None)` — with no `task`, binds
+  your intent + the data's shape to a grading contract and auto-binds ONLY a
+  clean single high/medium match; a conflict, split, or ambiguity raises with
+  the proposals so you pin `task=`. Pass `task=` to bind explicitly.
+- `evals.runs.create(items=…, intent=…, …)` — the inline sugar carries the
+  same requirement; `task` optional.
+- CLI: `pareta evals propose --file … --intent …`; `pareta evals run` gains
+  `--intent` (and `--task` is now optional).
+- MCP: new `propose_contract` tool; `run_eval` gains `intent`.
+- New exports: `ContractProposal`, `ProposalResult`; `EvalSet.intent`.
+
+Migration: add `intent="…"` to every `evals.create` / `runs.create`. A create
+without intent now fails fast client-side (and the server 400s it, which is how
+pre-2.0 SDKs already surface the change).
+
 ## 1.3.0 — 2026-07-19
 
 - **Image editing**: `client.images.edit(image, prompt, seed=?)` →

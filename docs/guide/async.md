@@ -384,7 +384,7 @@ console.log("requests (30d):", metrics.requests_30d);
 
 ### Run several eval runs in parallel
 
-`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `task=` + `items=` creates the eval set and the run in one call.
+`evals.runs.create(..., wait=True)` polls `runs.retrieve()` until the run is terminal using `asyncio.sleep`, so it never blocks the loop. That makes benchmarking `"auto"` on several of your datasets — one run per eval set — a natural `gather`. Passing `intent=` + `items=` creates the eval set and the run in one call.
 
 **Python**
 
@@ -393,11 +393,11 @@ import asyncio
 from pareta import AsyncPareta
 
 JOBS = {
-    "contract-key-fields": [
+    "extract the payment amount from each contract": [
         {"input": "Acme Corp agrees to pay $5,000 net 30.", "expected": {"amount": "5000"}},
         {"input": "Total due: $1,200 by 2026-07-01.", "expected": {"amount": "1200"}},
     ],
-    "invoice-extraction": [
+    "extract the total from each invoice": [
         {"input": "INVOICE #4471 ... TOTAL $1,240.00 ...", "expected": {"total": "1240.00"}},
     ],
 }
@@ -405,14 +405,14 @@ JOBS = {
 
 async def main():
     async with AsyncPareta.from_env() as pa:
-        # one run per dataset: "auto" against that task's frontier baselines
+        # one run per dataset: "auto" against the task's frontier baselines
         runs = await asyncio.gather(
             *(
                 pa.evals.runs.create(
-                    task=task, items=items,
+                    intent=intent, items=items,
                     models=["auto"], frontier="benchmarked", wait=True,
                 )
-                for task, items in JOBS.items()
+                for intent, items in JOBS.items()
             )
         )
         for run in runs:
@@ -432,21 +432,21 @@ asyncio.run(main())
 import { Pareta } from "pareta";
 
 const JOBS: Record<string, Array<Record<string, unknown>>> = {
-  "contract-key-fields": [
+  "extract the payment amount from each contract": [
     { input: "Acme Corp agrees to pay $5,000 net 30.", expected: { amount: "5000" } },
     { input: "Total due: $1,200 by 2026-07-01.", expected: { amount: "1200" } },
   ],
-  "invoice-extraction": [
+  "extract the total from each invoice": [
     { input: "INVOICE #4471 ... TOTAL $1,240.00 ...", expected: { total: "1240.00" } },
   ],
 };
 
 const pa = Pareta.fromEnv();
 
-// one run per dataset: "auto" against that task's frontier baselines
+// one run per dataset: "auto" against the task's frontier baselines
 const runs = await Promise.all(
-  Object.entries(JOBS).map(([task, items]) =>
-    pa.evals.runs.create({ task, items, models: ["auto"], frontier: "benchmarked", wait: true }),
+  Object.entries(JOBS).map(([intent, items]) =>
+    pa.evals.runs.create({ intent, items, models: ["auto"], frontier: "benchmarked", wait: true }),
   ),
 );
 for (const run of runs) {
@@ -459,7 +459,7 @@ for (const run of runs) {
 
 Eval runs are metered against the org balance for the compute used (`"auto"` plus any frontier baselines), and raise `InsufficientCreditsError` on an empty balance. `run.cost` is a `Decimal` in dollars, floored to whole cents (so a sub-cent run reads `Decimal("0.00")`); `run.cost_micro_usd` is the raw integer micro-USD if you need the exact figure. See [Evals](evaluation.md) and [Billing](core-concepts.md).
 
-The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a task to resolve against (taken from `task=` or looked up from the eval set):
+The `frontier=` keywords pick the vendor baselines. In the async client, `"all"` and `"benchmarked"` resolve the roster by awaiting `evals.frontier_models()` SDK-side, so they need a contract to resolve against (a pinned `task=`, or the contract bound to the eval set — including the one the binder chose for an inline `items=… + intent=…` create):
 
 **Python**
 

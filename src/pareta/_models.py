@@ -451,10 +451,112 @@ class EvalSet(_Base):
     def scoring_strategy(self) -> str | None:
         return self._raw.get("scoring_strategy")
 
+    @property
+    def intent(self) -> str | None:
+        """The one-sentence success criterion this set was created with
+        (CB1: an eval set is DATA + INTENT). Required at create."""
+        return self._raw.get("intent")
+
 
 def _eval_set_from_create(raw) -> EvalSet:
     """POST /v1/eval-sets → {"eval_set": {...}}."""
     return EvalSet((raw or {}).get("eval_set") or {})
+
+
+class ContractProposal(_Base):
+    """One proposed grading contract for an uploaded dataset (a row of
+    ProposalResult.proposals). `task_id` is the contract to bind; `confidence`
+    is "high"/"medium"/"low"; `evidence` carries the structural fit
+    (`validated_n`/`total_n`), the matcher's reasoning, and `alternatives`.
+    `warning` is set on the custom-eval floor when the data looks
+    extraction-shaped (judge grading is weaker there)."""
+
+    @property
+    def task_id(self) -> str | None:
+        return self._raw.get("task_id")
+
+    @property
+    def confidence(self) -> str | None:
+        return self._raw.get("confidence")
+
+    @property
+    def evidence(self) -> dict:
+        return self._raw.get("evidence") or {}
+
+    @property
+    def warning(self) -> str | None:
+        return self._raw.get("warning")
+
+
+class ProposalResult(_Base):
+    """The binder's answer for `evals.propose_contract` (POST
+    /v1/eval-sets/propose-contract): which grading contract(s) fit your data
+    under your stated intent. Nothing is persisted — confirm by passing the
+    chosen `task_id` (or letting `create` auto-bind a clean single proposal).
+
+    - `proposals`: ranked ContractProposal rows (may be empty on a hard split).
+    - `homogeneous`: False when the set is mixed (a top contract validates a
+      strict majority, not all) — `split` describes it; CB2 handles mixed sets.
+    - `conflict`: set when your intent describes a different job than the
+      data's shape supports; carries `intended_task` + `reasoning`.
+    - `intent`: your intent, echoed back.
+    - `bound_task` / `is_clean`: the SDK's auto-bind decision (see below)."""
+
+    @property
+    def proposals(self) -> list[ContractProposal]:
+        return [ContractProposal(p) for p in (self._raw.get("proposals") or [])]
+
+    @property
+    def homogeneous(self) -> bool:
+        return bool(self._raw.get("homogeneous"))
+
+    @property
+    def split(self) -> dict | None:
+        return self._raw.get("split")
+
+    @property
+    def conflict(self) -> dict | None:
+        return self._raw.get("conflict")
+
+    @property
+    def closest_task(self) -> str | None:
+        return self._raw.get("closest_task")
+
+    @property
+    def intent(self) -> str | None:
+        return self._raw.get("intent")
+
+    @property
+    def message(self) -> str | None:
+        return self._raw.get("message")
+
+    @property
+    def is_clean(self) -> bool:
+        """True when the binder matched exactly ONE homogeneous SPECIFIC
+        contract at high/medium confidence and no conflict/split — the case
+        `create` auto-binds without a human confirming. Low confidence, a
+        conflict, a split, zero or multiple proposals all require an explicit
+        `task=`. The `custom-eval` universal FLOOR is EXCLUDED: the binder
+        offers it only when no specific contract fits (its proposal has the
+        same clean shape), and per the precision ladder the floor is a
+        CHOICE — the user opts in with `task="custom-eval"`, never a silent
+        auto-bind."""
+        props = self.proposals
+        return (self.homogeneous and self.conflict is None
+                and self.split is None and len(props) == 1
+                and props[0].confidence in ("high", "medium")
+                and bool(props[0].task_id)
+                and props[0].task_id != "custom-eval")
+
+    @property
+    def bound_task(self) -> str | None:
+        """The task `create` would auto-bind, or None if the result isn't clean."""
+        return self.proposals[0].task_id if self.is_clean else None
+
+
+def _proposal_result(raw) -> ProposalResult:
+    """POST /v1/eval-sets/propose-contract → the proposal object (flat)."""
+    return ProposalResult(raw or {})
 
 
 def _eval_set_list(raw) -> list[EvalSet]:

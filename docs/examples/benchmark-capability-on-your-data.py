@@ -53,12 +53,13 @@ def main() -> None:
 
     # Run YOUR rows through the recommended open model + the benchmarked frontier
     # models in one call. evals.runs.create builds the eval set inline (task= +
-    # items=), kicks off the run, and (wait=True) polls to completion.
+    # items= + intent=), kicks off the run, and (wait=True) polls to completion.
     candidates = [lb.recommended] if lb.recommended else open_models[:1]
     print(f"\nbenchmarking {candidates} vs frontier on {len(ROWS)} of your rows ...")
     run = pa.evals.runs.create(
         task=TASK,
         items=ROWS,
+        intent="answer each prompt as instructed",
         models=candidates,          # open candidate(s)
         frontier="benchmarked",     # add the task's benchmarked frontier baselines
         wait=True,

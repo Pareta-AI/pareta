@@ -348,11 +348,12 @@ they are programming errors, not server responses:
 - [`chat.completions.create()`](./inference.md) raises `ValueError` if `model`
   or `messages` is empty.
 - [`tasks.match()`](../reference/tasks.md) raises `ValueError` if `query` is empty.
-- [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` is empty.
+- [`evals.sets.create()`](evaluation.md) raises `ValueError` if `items` or
+  `intent` is empty.
 - [`evals.runs.create()`](evaluation.md) raises `ValueError` if neither
-  `eval_set=` nor `task=`+`items=` is supplied, and `ValueError`/`TypeError` if
-  `frontier=` is an unparseable keyword or a frontier keyword can't be resolved
-  to a task.
+  `eval_set=` nor `items=` (with `intent=`) is supplied, and
+  `ValueError`/`TypeError` if `frontier=` is an unparseable keyword or a
+  frontier keyword can't be resolved to a task.
 - [`evals.sets.upload_document()`](evaluation.md) raises `TypeError` if `file` is
   not a path, bytes, or a binary file-like object.
 
@@ -523,7 +524,7 @@ from pareta import Pareta, ParetaError
 with Pareta.from_env() as pa:
     try:
         run = pa.evals.runs.create(
-            task="contract-key-fields",
+            intent="extract the key fields from each contract",
             items=[{"input": "...", "expected": "..."}],
             models=["auto"],
             frontier="benchmarked",
@@ -544,7 +545,7 @@ import { Pareta, ParetaError } from "pareta";
 const pa = Pareta.fromEnv();
 try {
   const run = await pa.evals.runs.create({
-    task: "contract-key-fields",
+    intent: "extract the key fields from each contract",
     items: [{ input: "...", expected: "..." }],
     models: ["auto"],
     frontier: "benchmarked",

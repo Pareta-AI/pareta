@@ -204,6 +204,7 @@ items = [
 run = pa.evals.runs.create(
     task=task_id,
     items=items,
+    intent="extract the key fields from each contract",
     models=candidates,        # open candidates to score
     frontier="benchmarked",   # baselines on this task's leaderboard, for context
     name="contracts shortlist v1",
@@ -230,6 +231,7 @@ const items = [
 const run = await pa.evals.runs.create({
   task: taskId,
   items,
+  intent: "extract the key fields from each contract",
   models: candidates,        // open candidates to score
   frontier: "benchmarked",   // baselines on this task's leaderboard, for context
   name: "contracts shortlist v1",
@@ -239,9 +241,10 @@ const run = await pa.evals.runs.create({
 
 `evals.runs.create` parameters:
 
-- Provide **either** `eval_set=<id>` (an existing set) **or** `task=` + `items=`
-  to create one inline. `models=` is required and is the list of open candidate
-  aliases to score.
+- Provide **either** `eval_set=<id>` (an existing set) **or** `items=` + `intent=`
+  to create one inline (`task=` optional — pass it to pin a specific grading
+  contract, or omit it and the binder resolves your intent + the data's shape).
+  `models=` is required and is the list of open candidate aliases to score.
 - `frontier=` controls the vendor baselines, resolved SDK-side:
   - `None` or `"none"` -> no baselines.
   - `"all"` -> every frontier model for the task.
@@ -254,7 +257,7 @@ const run = await pa.evals.runs.create({
   `wait=False` returns immediately with a `"running"`/queued run; poll it yourself
   with `pa.evals.runs.wait(run.id)` or `pa.evals.runs.retrieve(run.id)`.
 
-`create` raises `ValueError` if neither `eval_set` nor `task`+`items` is given,
+`create` raises `ValueError` if neither `eval_set` nor `items`+`intent` is given,
 and `ValueError` if `items` is empty.
 
 This call is metered. The org balance is debited for the open and frontier compute
@@ -266,8 +269,9 @@ the run used. If the balance is empty it raises `InsufficientCreditsError`.
 from pareta import InsufficientCreditsError
 
 try:
-    run = pa.evals.runs.create(task=task_id, items=items, models=candidates,
-                               frontier="benchmarked", wait=True)
+    run = pa.evals.runs.create(task=task_id, items=items,
+                               intent="extract the key fields from each contract",
+                               models=candidates, frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     raise SystemExit("Org balance is empty. Top up in the dashboard (browser-only).")
 ```
@@ -279,7 +283,8 @@ import { InsufficientCreditsError } from "pareta";
 
 try {
   const run = await pa.evals.runs.create({
-    task: taskId, items, models: candidates, frontier: "benchmarked", wait: true,
+    task: taskId, items, intent: "extract the key fields from each contract",
+    models: candidates, frontier: "benchmarked", wait: true,
   });
 } catch (e) {
   if (e instanceof InsufficientCreditsError) {
@@ -298,7 +303,9 @@ against the set id:
 **Python**
 
 ```python
-es = pa.evals.sets.create(task=task_id, items=items, name="contracts with PDFs")
+es = pa.evals.sets.create(task=task_id, items=items,
+                          intent="extract the key fields from each contract",
+                          name="contracts with PDFs")
 
 # Attach a PDF to row 0's "document" blob field. Files under 5 MiB go inline;
 # larger ones use a signed-URL upload. The SDK picks the path for you.
@@ -311,7 +318,10 @@ run = pa.evals.runs.create(eval_set=es.id, models=candidates,
 **TypeScript**
 
 ```typescript
-const es = await pa.evals.sets.create({ task: taskId, items, name: "contracts with PDFs" });
+const es = await pa.evals.sets.create({
+  task: taskId, items, intent: "extract the key fields from each contract",
+  name: "contracts with PDFs",
+});
 
 // Attach a PDF to row 0's "document" blob field. Files under 5 MiB go inline;
 // larger ones use a signed-URL upload. The SDK picks the path for you.
@@ -558,8 +568,9 @@ candidates = [e.name for e in lb.models if e.kind == "open"][:3]
 # 3. prove it on your data (open candidates + benchmarked frontier baselines)
 items = [{"input": "...", "expected": {...}}]  # your rows
 try:
-    run = pa.evals.runs.create(task=task_id, items=items, models=candidates,
-                               frontier="benchmarked", wait=True)
+    run = pa.evals.runs.create(task=task_id, items=items,
+                               intent="extract the key fields from each contract",
+                               models=candidates, frontier="benchmarked", wait=True)
 except InsufficientCreditsError:
     raise SystemExit("Top up the org balance in the dashboard (browser-only).")
 
@@ -599,7 +610,8 @@ const items = [{ input: "...", expected: {} }];  // your rows
 let run;
 try {
   run = await pa.evals.runs.create({
-    task: taskId, items, models: candidates, frontier: "benchmarked", wait: true,
+    task: taskId, items, intent: "extract the key fields from each contract",
+    models: candidates, frontier: "benchmarked", wait: true,
   });
 } catch (e) {
   if (e instanceof InsufficientCreditsError) {
@@ -650,7 +662,9 @@ async def main():
         m = await pa.tasks.match("extract the key fields from a contract")
         task_id = m.chosen.task_id
         run = await pa.evals.runs.create(
-            task=task_id, items=[...], models=[...], frontier="benchmarked", wait=True)
+            task=task_id, items=[...],
+            intent="extract the key fields from each contract",
+            models=[...], frontier="benchmarked", wait=True)
         winner = max((r for r in run.results if r.kind == "open"),
                      key=lambda r: (r.quality_mean or 0))
         ep = await pa.endpoints.deploy(task=task_id, model=winner.model_id, wait=True)
@@ -676,7 +690,8 @@ async function main() {
   const m = await pa.tasks.match("extract the key fields from a contract");
   const taskId = m.chosen.taskId;
   const run = await pa.evals.runs.create({
-    task: taskId, items: [], models: [], frontier: "benchmarked", wait: true,
+    task: taskId, items: [], intent: "extract the key fields from each contract",
+    models: [], frontier: "benchmarked", wait: true,
   });
   const winner = run.results
     .filter((r) => r.kind === "open")

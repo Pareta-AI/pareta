@@ -96,7 +96,7 @@ async def test_registers_expected_tools():
         # discovery
         "match_task", "list_tasks", "get_task", "list_models",
         # eval
-        "run_eval", "get_eval_run",
+        "propose_contract", "run_eval", "get_eval_run",
         # inference + auto
         "chat", "auto_metrics", "compare_frontier",
         # audio
