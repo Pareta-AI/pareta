@@ -37,10 +37,14 @@ class _Choice:
 
 
 class _Completion:
-    def __init__(self, text: str):
+    def __init__(self, text: str, *, billed=None, frontier=None, savings=None):
         self.choices = [_Choice(text)]
         self.model = "ep_fake"
         self.usage = _Obj({"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8})
+        # #164 receipt fields the SDK's ChatCompletion exposes.
+        self.billed_micro_usd = billed
+        self.frontier_would_have_cost_micro_usd = frontier
+        self.savings_factor = savings
 
 
 class _FakeTasks:
@@ -58,19 +62,24 @@ class _FakeTasks:
 
 
 class _FakeCompletions:
+    def __init__(self, *, billed=None, frontier=None, savings=None):
+        self._cost = dict(billed=billed, frontier=frontier, savings=savings)
+        self.last_messages = None
+
     def create(self, *, model, messages, **kwargs):
-        return _Completion("hello from " + model)
+        self.last_messages = messages
+        return _Completion("hello from " + model, **self._cost)
 
 
 class _FakeChat:
-    def __init__(self):
-        self.completions = _FakeCompletions()
+    def __init__(self, completions=None):
+        self.completions = completions or _FakeCompletions()
 
 
 class _FakeClient:
-    def __init__(self, *, tasks=None):
+    def __init__(self, *, tasks=None, chat=None):
         self.tasks = tasks or _FakeTasks()
-        self.chat = _FakeChat()
+        self.chat = chat or _FakeChat()
 
 
 def _patch_client(monkeypatch, client):
@@ -142,6 +151,44 @@ def test_chat_returns_assistant_text(monkeypatch):
     assert out["text"] == "hello from ep_1"
     assert out["model"] == "ep_fake"
     assert out["usage"]["total_tokens"] == 8
+    # no cost keys when the completion carries no receipt — and no crash
+    assert "billed_micro_usd" not in out
+
+
+def test_chat_returns_cost_receipt_and_savings(monkeypatch):
+    comp = _FakeCompletions(billed=700, frontier=12000, savings=17.1)
+    _patch_client(monkeypatch, _FakeClient(chat=_FakeChat(comp)))
+    out = mcp_server.chat(prompt="hi")
+    assert out["billed_micro_usd"] == 700
+    assert out["billed_usd"] == round(700 / 1_000_000, 6)
+    assert out["frontier_would_have_cost_micro_usd"] == 12000
+    assert out["savings_vs_frontier_x"] == 17.1
+
+
+def test_chat_with_images_builds_multimodal_message(monkeypatch, tmp_path):
+    comp = _FakeCompletions()
+    _patch_client(monkeypatch, _FakeClient(chat=_FakeChat(comp)))
+    img = tmp_path / "receipt.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\nfakebytes")
+    mcp_server.chat(prompt="extract the total", image_paths=[str(img)])
+    content = comp.last_messages[0]["content"]
+    assert isinstance(content, list)
+    assert content[0] == {"type": "text", "text": "extract the total"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_chat_bad_image_path_returns_clean_error(monkeypatch):
+    _patch_client(monkeypatch, _FakeClient())
+    out = mcp_server.chat(prompt="x", image_paths=["/nope/does-not-exist.png"])
+    assert "error" in out and "could not read image" in out["error"]
+
+
+def test_chat_text_only_content_stays_a_string(monkeypatch):
+    comp = _FakeCompletions()
+    _patch_client(monkeypatch, _FakeClient(chat=_FakeChat(comp)))
+    mcp_server.chat(prompt="just text")
+    assert comp.last_messages[0]["content"] == "just text"
 
 
 # ── error handling: ParetaError is surfaced, never raised ────────────────────

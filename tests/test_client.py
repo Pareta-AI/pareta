@@ -43,6 +43,36 @@ def test_auth_header_and_path():
     assert seen["path"] == "/v1/models"
 
 
+def test_chat_completion_exposes_cost_receipt():
+    # #164: the chat proxy returns X-Pareta-Billed + the frontier counterfactual
+    # as headers; the SDK surfaces them on the completion.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"id": "c1", "model": "auto",
+                  "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+                  "usage": {"total_tokens": 10}},
+            headers={"X-Pareta-Billed": "700",
+                     "X-Pareta-Frontier-Would-Have-Cost": "12000"})
+
+    pa = sync_client(handler)
+    c = pa.chat.completions.create(model="auto", messages=[{"role": "user", "content": "hi"}])
+    assert c.billed_micro_usd == 700
+    assert c.frontier_would_have_cost_micro_usd == 12000
+    assert c.savings_factor == round(12000 / 700, 1)
+
+
+def test_chat_completion_cost_none_when_headers_absent():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return json_response(200, {"choices": [{"message": {"content": "hi"}}]})
+
+    pa = sync_client(handler)
+    c = pa.chat.completions.create(model="auto", messages=[{"role": "user", "content": "x"}])
+    assert c.billed_micro_usd is None
+    assert c.frontier_would_have_cost_micro_usd is None
+    assert c.savings_factor is None
+
+
 def test_context_manager_closes():
     with sync_client(lambda r: json_response(200, {"data": []})) as pa:
         assert pa.models.list() is not None

@@ -185,7 +185,7 @@ class Pareta(_BaseClient):
         self.close()
 
     # ── transport ─────────────────────────────────────────────────────
-    def request(self, method: str, path: str, *, body=None, params=None, files=None, data=None, cast=None):
+    def request(self, method: str, path: str, *, body=None, params=None, files=None, data=None, cast=None, with_headers=False):
         url = f"{self.base_url}{path}"
         is_multipart = files is not None or data is not None
         headers = self._headers(json_body=(body is not None and not is_multipart))
@@ -212,7 +212,11 @@ class Pareta(_BaseClient):
             else:
                 if resp.is_success:
                     raw = resp.json() if resp.content else {}
-                    return cast(raw) if cast else raw
+                    obj = cast(raw) if cast else raw
+                    # #164: the chat path attaches the per-call receipt headers
+                    # (X-Pareta-Billed + the frontier counterfactual) — return
+                    # the response headers so the caller can read them.
+                    return (obj, resp.headers) if with_headers else obj
                 if attempt < self.max_retries and self._should_retry(resp.status_code):
                     time.sleep(self._backoff(attempt, self._retry_after_seconds(resp)))
                     continue
@@ -308,7 +312,7 @@ class AsyncPareta(_BaseClient):
     async def __aexit__(self, *exc) -> None:
         await self.aclose()
 
-    async def request(self, method: str, path: str, *, body=None, params=None, files=None, data=None, cast=None):
+    async def request(self, method: str, path: str, *, body=None, params=None, files=None, data=None, cast=None, with_headers=False):
         import asyncio
 
         url = f"{self.base_url}{path}"
@@ -337,7 +341,8 @@ class AsyncPareta(_BaseClient):
             else:
                 if resp.is_success:
                     raw = resp.json() if resp.content else {}
-                    return cast(raw) if cast else raw
+                    obj = cast(raw) if cast else raw
+                    return (obj, resp.headers) if with_headers else obj
                 if attempt < self.max_retries and self._should_retry(resp.status_code):
                     await asyncio.sleep(self._backoff(attempt, self._retry_after_seconds(resp)))
                     continue

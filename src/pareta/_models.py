@@ -110,6 +110,49 @@ class ChatCompletion(_Base):
     def usage(self) -> Usage:
         return Usage(self._raw.get("usage") or {})
 
+    # ── #164: the per-call receipt (populated from the response headers) ──
+    # `model="auto"` bills the routed open-model cost; `frontier_would_have_cost`
+    # is what ONE list-priced frontier call would have cost the same request.
+    # Both are micro-USD ints (0.000001 USD); None when the server didn't send
+    # them (e.g. a direct model call, or an older server). Held in a separate
+    # slot — NOT in `_raw` — so `to_dict()` stays the raw server JSON, untouched.
+    __slots__ = ("_cost",)
+
+    def _with_cost(self, headers) -> "ChatCompletion":
+        def _int(name):
+            v = headers.get(name) if headers is not None else None
+            try:
+                return int(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+        self._cost = {
+            "billed_micro_usd": _int("X-Pareta-Billed"),
+            "frontier_would_have_cost_micro_usd": _int("X-Pareta-Frontier-Would-Have-Cost"),
+        }
+        return self
+
+    @property
+    def billed_micro_usd(self) -> int | None:
+        """What Pareta charged for this call, in micro-USD (0 on an idempotent
+        replay). None if the server didn't send a receipt."""
+        return (getattr(self, "_cost", None) or {}).get("billed_micro_usd")
+
+    @property
+    def frontier_would_have_cost_micro_usd(self) -> int | None:
+        """What one list-priced frontier call would have cost the same request,
+        in micro-USD — the counterfactual behind the savings."""
+        return (getattr(self, "_cost", None) or {}).get("frontier_would_have_cost_micro_usd")
+
+    @property
+    def savings_factor(self) -> float | None:
+        """`frontier_would_have_cost / billed` — e.g. 17.0 means 17× cheaper
+        than the frontier. None when either figure is missing or billed is 0
+        (a free replay)."""
+        b, f = self.billed_micro_usd, self.frontier_would_have_cost_micro_usd
+        if b and f and b > 0:
+            return round(f / b, 1)
+        return None
+
 
 class ChatCompletionChunk(ChatCompletion):
     """One SSE delta. `chunk.choices[0].delta.content` is the incremental text."""

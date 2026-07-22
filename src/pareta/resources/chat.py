@@ -48,7 +48,12 @@ class Completions:
         body = _build_body(model, messages, stream, kwargs)
         if stream:
             return self._client.stream("POST", _PATH, body=body, cast=ChatCompletionChunk)
-        return self._client.request("POST", _PATH, body=body, cast=ChatCompletion)
+        # #164: read the receipt headers (billed + frontier counterfactual) off
+        # the response and attach them to the completion (.billed_micro_usd,
+        # .savings_factor, …).
+        completion, headers = self._client.request(
+            "POST", _PATH, body=body, cast=ChatCompletion, with_headers=True)
+        return completion._with_cost(headers)
 
 
 class Chat:
@@ -73,7 +78,9 @@ class AsyncCompletions:
         if stream:
             # Return the async generator directly (caller does `async for`).
             return self._client.stream("POST", _PATH, body=body, cast=ChatCompletionChunk)
-        return await self._client.request("POST", _PATH, body=body, cast=ChatCompletion)
+        completion, headers = await self._client.request(
+            "POST", _PATH, body=body, cast=ChatCompletion, with_headers=True)
+        return completion._with_cost(headers)
 
 
 class AsyncChat:

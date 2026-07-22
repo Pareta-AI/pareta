@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.0 — 2026-07-22
+
+**Every chat call now returns its receipt.** The API has always sent the
+per-call cost as response headers; the SDK now surfaces them:
+
+- `completion.billed_micro_usd` — what Pareta charged (0 on an idempotent
+  replay).
+- `completion.frontier_would_have_cost_micro_usd` — what one list-priced
+  frontier call would have cost the same request.
+- `completion.savings_factor` — frontier ÷ billed (e.g. `17.0` = 17× cheaper).
+
+MCP: the `chat` tool returns `billed_usd` / `frontier_would_have_cost_usd` /
+`savings_vs_frontier_x`, and gains `image_paths` — attach local images or PDFs
+(receipts, scans, screenshots) and Pareta routes them to its vision lane.
+`to_dict()` remains the raw server JSON, untouched.
+
+
 ## 2.0.0 — 2026-07-21
 
 **Breaking (CB1): an eval set is now DATA + INTENT.** The same rows can mean

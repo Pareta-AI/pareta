@@ -205,9 +205,38 @@ def get_eval_run(run_id: str) -> dict[str, Any]:
 
 
 # ── inference ──────────────────────────────────────────────────────────────
+def _chat_content(prompt: str, image_paths: list[str] | None):
+    """Build the message content: a bare string for text-only, or an
+    OpenAI-style multimodal list (text + image_url blocks) when local
+    images/PDFs are attached. Pareta's vision lane reads the images; PDFs are
+    rasterized server-side."""
+    if not image_paths:
+        return prompt
+    import base64
+    import mimetypes
+    import os
+
+    parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for p in image_paths:
+        path = os.path.expanduser(p)
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError as e:
+            # _guard only catches ParetaError; turn a bad path into a clean
+            # agent-readable message instead of a raw traceback.
+            raise ParetaError(f"could not read image path {p!r}: {e}") from e
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        b64 = base64.b64encode(data).decode("ascii")
+        parts.append({"type": "image_url",
+                      "image_url": {"url": f"data:{mime};base64,{b64}"}})
+    return parts
+
+
 @mcp.tool()
 @_guard
-def chat(prompt: str, model: str = "auto") -> dict[str, Any]:
+def chat(prompt: str, model: str = "auto",
+         image_paths: list[str] | None = None) -> dict[str, Any]:
     """Send a single-turn prompt to Pareta and return the assistant's text
     reply (non-streaming).
 
@@ -215,16 +244,35 @@ def chat(prompt: str, model: str = "auto") -> dict[str, Any]:
     request, routes each part to the cheapest model that holds frontier-grade
     quality, verifies, and answers. "auto" is the inference surface — other
     model ids only work for orgs with the direct-model entitlement.
-    METERED: a successful completion debits the
-    org balance (a failed one bills $0).
-    Returns `{"text": …, "model": …, "usage": …}`.
-    """
+
+    `image_paths`: optional local image or PDF file paths — attach receipts,
+    screenshots, scanned documents, etc. and Pareta routes them to its vision
+    lane (PDFs are rasterized server-side).
+
+    METERED: a successful completion debits the org balance (a failed one bills
+    $0). Returns `{"text", "model", "usage"}` plus the per-call receipt:
+    `billed_micro_usd` (what Pareta charged), `frontier_would_have_cost_micro_usd`
+    (what one list-priced frontier call would have cost), and
+    `savings_vs_frontier_x` (e.g. 17.0 = 17× cheaper)."""
     completion = _client().chat.completions.create(
-        model=model, messages=[{"role": "user", "content": prompt}]
+        model=model,
+        messages=[{"role": "user", "content": _chat_content(prompt, image_paths)}],
     )
     choices = completion.choices
     text = choices[0].message.content if choices else None
-    return {"text": text, "model": completion.model, "usage": completion.usage.to_dict()}
+    out: dict[str, Any] = {
+        "text": text, "model": completion.model, "usage": completion.usage.to_dict(),
+    }
+    if completion.billed_micro_usd is not None:
+        out["billed_micro_usd"] = completion.billed_micro_usd
+        out["billed_usd"] = round(completion.billed_micro_usd / 1_000_000, 6)
+    if completion.frontier_would_have_cost_micro_usd is not None:
+        out["frontier_would_have_cost_micro_usd"] = completion.frontier_would_have_cost_micro_usd
+        out["frontier_would_have_cost_usd"] = round(
+            completion.frontier_would_have_cost_micro_usd / 1_000_000, 6)
+    if completion.savings_factor is not None:
+        out["savings_vs_frontier_x"] = completion.savings_factor
+    return out
 
 
 @mcp.tool()
